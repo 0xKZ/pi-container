@@ -17,7 +17,12 @@ RUN apt-get update \
       iproute2 \
  && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @mariozechner/pi-coding-agent
+# Pinned deliberately -- avoid auto-upgrading to a version that might
+# change behavior we've already tuned our workflow around.
+ARG PI_VERSION=0.79.6
+
+# "--ignore-scripts" is suggested by the pi documentation itself.
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@${PI_VERSION}
 
 ARG PI_UID=1000
 ARG PI_GID=1000
@@ -30,6 +35,11 @@ RUN userdel --remove node 2>/dev/null || true \
 
 USER pi
 WORKDIR /workspace
+
+# Set environment variables for pi here.
+#
+# This one avoids telemetry and update checks on pi startup.
+ENV PI_OFFLINE=1
 
 # pi reads ~/.pi/agent/* at runtime; the directory is mounted via a volume.
 ENTRYPOINT ["pi"]
