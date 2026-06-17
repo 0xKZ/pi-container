@@ -10,7 +10,8 @@ Note the original code is unlicensed, so I can't embed this code directly in any
 
 My changes so far:
 - slimmed down the agents file, converted to english.
-- ...
+- rewrote the script to add all the network security, as the original guide still had the agent exposed to the internet
+- rewrote the readme
 
 ---
 
