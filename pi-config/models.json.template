@@ -1,0 +1,15 @@
+{
+  "providers": {
+    "llama-local": {
+      "baseUrl": "http://__EGRESS_PROXY_IP__:__EGRESS_PROXY_PORT__/v1",
+      "api": "openai-completions",
+      "apiKey": "not-required",
+      "models": [
+        {
+          "id": "unsloth/Qwen3.6-27B-GGUF:Q6_K",
+          "name": "llama-local/Qwen3.6-27B"
+        }
+      ]
+    }
+  }
+}

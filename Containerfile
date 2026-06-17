@@ -8,7 +8,10 @@ FROM node:22-bookworm-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
+      bash \
+      curl \
       git \
+      fd-find \
       ripgrep \
       ca-certificates \
       iproute2 \
