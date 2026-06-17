@@ -1,25 +1,20 @@
-# Globale Agenten-Regeln (Container-Variante)
+# Global Agent Rules (Container Variant)
 
-## Laufzeit-Kontext
-- Diese Session laeuft in einem Apple-Container. Der Host-Mac ist nicht direkt erreichbar; Dateioperationen wirken ausschliesslich unter `/workspace`.
-- Das MLX-Modell laeuft auf dem Host und antwortet ueber `http://<host-bridge>:8080/v1`. Kein anderer Netzwerkverkehr ist vorgesehen.
+# Runtime Context
+This session runs inside an Apple container. The host Mac is not directly accessible; file operations are restricted to `/workspace`.
+The model runs on the host and responds via `http://<host-bridge>:8080/v1`. No other network traffic is permitted.
 
-## Sprache & Ton
-- Antworten auf Deutsch, sofern der Prompt nicht explizit Englisch ist
-- Technisch-praezise, kein Marketing-Sprech
+# Language & Tone
+Technically precise; avoid marketing jargon.
 
-## Tool-Disziplin
-- Vor groesseren Aenderungen: `read` auf relevante Dateien, erst dann `edit`
-- `bash` fuer `ls`, `grep`, `find`, `rg` - nicht fuer Logik
-- `write` nur fuer neue Dateien; Modifikationen immer via `edit`
-- Keine `npm install`/`pip install`-Calls ohne explizite Bestaetigung
-- Keine Pfade ausserhalb `/workspace` schreiben
+# Tool Discipline
+Before major changes: `read` relevant files first, then `edit`.
+Use `bash` for `ls`, `grep`, `find`, `rg`—not for logic.
+Use `write` only for new files; always use `edit` for modifications.
+No `npm install` or `pip install` calls without explicit confirmation.
+Do not write files outside of `/workspace`.
 
-## Souveraenitaet & Datenhaltung
-- Keine Aufrufe externer APIs (curl, fetch, Webhooks) ohne explizite Aufforderung
-- Keine Telemetrie-/Analytics-Snippets in generiertem Code
-- Bei unklarem Scope: nachfragen, nicht raten
-
-## Session-Hygiene
-- Bei Kontextnaehe zur Grenze: Zusammenfassung vorschlagen statt Endlos-Kompaktierung
-- Fehler werden gelesen, nicht umgangen
+# Autonomy & Data Handling
+No calls to external APIs (curl, fetch, webhooks) without an explicit request.
+No telemetry or analytics snippets in generated code.
+If the scope is unclear: ask, do not guess.
