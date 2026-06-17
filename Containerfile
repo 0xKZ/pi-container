@@ -33,13 +33,15 @@ RUN userdel --remove node 2>/dev/null || true \
  && groupadd --gid ${PI_GID} pi \
  && useradd --uid ${PI_UID} --gid ${PI_GID} --create-home --shell /bin/bash pi
 
-USER pi
-WORKDIR /workspace
-
 # Set environment variables for pi here.
 #
 # This one avoids telemetry and update checks on pi startup.
 ENV PI_OFFLINE=1
 
-# pi reads ~/.pi/agent/* at runtime; the directory is mounted via a volume.
-ENTRYPOINT ["pi"]
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+USER pi
+WORKDIR /workspace
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

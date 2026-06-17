@@ -21,6 +21,7 @@ IMAGE_TAG="${IMAGE_TAG:-pi-coding-agent:local}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
+PROJECT_NAME="$(basename "$PROJECT_DIR")"
 
 # --------------------------------------------------------------------------
 # Network sandbox overview
@@ -162,7 +163,10 @@ if [ "$SHELL_MODE" = true ]; then
     --volume "$PROJECT_DIR:/workspace" \
     --workdir /workspace \
     --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
-    "$IMAGE_TAG"
+    --env "PROJECT_NAME=$PROJECT_NAME" \
+    "$IMAGE_TAG" \
+    -c "export PS1='(AGENT-SANDBOX-${PROJECT_NAME}) \w \$ '; exec bash --norc"
+
   exit 0
 fi
 
@@ -174,5 +178,6 @@ container run \
   --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
   --volume "$PROJECT_DIR:/workspace" \
   --workdir /workspace \
+  --env "PROJECT_NAME=$PROJECT_NAME" \
   "$IMAGE_TAG" \
   "$@"
