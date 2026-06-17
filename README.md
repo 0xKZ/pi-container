@@ -3,15 +3,7 @@ Originally based on https://github.com/michaelhannecke/pi-container
 
 ^ That repo has a full readme, I cleared this out to minimize it.
 
-There was an accompanying blog post. I archived that in the repo as a PDF. I am not sure how much of the blog post or the repo is vibed/slop (Some red flags, like it being written in May 2026 but recommending an old model, plus some of the language. However the repo has a reasonably new model so I think it was someone that maybe vibed half of the article?). So, this repo is a starting point for me to test it out, and if I end up having success with it, I will continue to modify and use.
-
-
-Note the original code is unlicensed, so I can't embed this code directly in any project, would have to start fresh. Just keep in mind.
-
-My changes so far:
-- slimmed down the agents file, converted to english.
-- rewrote the script to add all the network security, as the original guide still had the agent exposed to the internet
-- rewrote the readme
+There was an accompanying blog post. I archived that in the repo as a PDF. I am not sure how much of the blog post or the repo is vibed/slop, but I ended up pretty much rewriting most of it for my own uses.
 
 ---
 
@@ -62,9 +54,57 @@ Try:
 PROJECT_DIR=~/development/my_project_directory ./scripts/run.sh --model llama-local/Qwen3.6-27B
 ```
 
-
 ### Notes on llama-server
 
 When I host on llama-server I need a `--host` argument. Using `0.0.0.0` works but exposes the server to everything on your LAN. 
 
 TODO: better instructions here
+
+## Convenience: easily launching session on the host mac
+
+I use fish shell, so these instructions are for fish shell.
+
+First, set a global variable so that the run script of this repo can be found anywhere. This only has to be run once and it will be saved by fish.
+
+```
+set -U PI_SANDBOX_RUN_SCRIPT ~/path/to/pi-container/scripts/run.sh
+```
+
+Also save the default model so you don't have to provide it all the time:
+```
+set -U PI_SANDBOX_DEFAULT_MODEL llama-local/Qwen3.6-27B
+```
+
+When you upgrade models, simply swap that command, or temporarily provide the `--model` argument for one-offs.
+
+
+Next, add the fish function as a new file at `~/.config/fish/functions/pi-agent.fish`:
+
+```
+function pi-agent --description "Run pi-coding-agent sandboxed, using the current directory as the project"
+    if not set -q PI_SANDBOX_RUN_SCRIPT
+        echo "PI_SANDBOX_RUN_SCRIPT is not set. Run: set -U PI_SANDBOX_RUN_SCRIPT /path/to/run.sh" >&2
+        return 1
+    end
+
+    if not test -x "$PI_SANDBOX_RUN_SCRIPT"
+        echo "PI_SANDBOX_RUN_SCRIPT points at '$PI_SANDBOX_RUN_SCRIPT', which doesn't exist or isn't executable." >&2
+        return 1
+    end
+
+    set -l args $argv
+
+    # Only inject the default model if the caller didn't already pass
+    # --model themselves -- lets you override per-call without editing
+    # any config, e.g. `pi-agent --model some-other-model`.
+    if set -q PI_SANDBOX_DEFAULT_MODEL
+        if not contains -- --model $args
+            set args --model $PI_SANDBOX_DEFAULT_MODEL $args
+        end
+    end
+
+    PROJECT_DIR="$PWD" "$PI_SANDBOX_RUN_SCRIPT" $args
+end
+```
+
+Now you are good to go. Simply run `pi-agent` inside of the directory of whatever project you want the agent to work in, and a container will be spun up to do so. Use `pi-agent --shell` to launch into a terminal instead of the agent for testing the networking sandbox (upon updating container versions for example).
