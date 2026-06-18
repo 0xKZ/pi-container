@@ -1,15 +1,10 @@
 
-Originally based on https://github.com/michaelhannecke/pi-container
+# What this is
 
-^ That repo has a full readme, I cleared this out to minimize it.
-
-There was an accompanying blog post. I archived that in the repo as a PDF. I am not sure how much of the blog post or the repo is vibed/slop, but I ended up pretty much rewriting most of it for my own uses.
-
----
+A wrapper that configures an Apple container that it then runs a pi coding agent on.
 
 # Usage
 
-NOTE: at the time of writing this https://github.com/apple/container/discussions/719 is not resolved. In the future, apple container may have more easily built in ways of firewalling internet traffic. If such a feature gets added, look into simplifying this.
 
 ## Build the VM image (only need to do this once, on the host machine):
 
@@ -108,3 +103,9 @@ end
 ```
 
 Now you are good to go. Simply run `pi-agent` inside of the directory of whatever project you want the agent to work in, and a container will be spun up to do so. Use `pi-agent --shell` to launch into a terminal instead of the agent for testing the networking sandbox (upon updating container versions for example).
+
+# Original inspiration
+
+Originally based on https://github.com/michaelhannecke/pi-container
+
+^ I didn't like how that repo allowed internet access to the agent, I wanted to go a step further and run it sandboxed and firewalled. It also has some other out of date things, like the version of pi it's built for is old, so the extension breaks the pi tools if you try to use it, among other things. Basically just documenting my original inspiration here.
