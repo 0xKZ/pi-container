@@ -18,6 +18,7 @@
 set -euo pipefail
 
 IMAGE_TAG="${IMAGE_TAG:-pi-coding-agent:local}"
+MEMORY="${MEMORY:-4g}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
@@ -234,14 +235,13 @@ if [ "$SHELL_MODE" = true ]; then
   exit 0
 fi
 
-# TODO(zach): Make the memory a parameter w/ default
-# TODO(zach): Add a `--name` parameter derived from project path
 container run \
+  --name "pi-${PROJECT_NAME}" \
   --network sandboxed \
   --rm \
   --interactive \
   --tty \
-  --memory 6g \
+  --memory "$MEMORY" \
   --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
   "${GRADLE_VOLUME_ARGS[@]}" \
   --volume "$PROJECT_DIR:/workspace" \
