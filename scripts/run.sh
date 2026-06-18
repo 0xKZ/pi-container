@@ -23,82 +23,45 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 
-# Each project's Gradle cache lives at its own real .gradle/ directory,
-# right inside that project -- the SAME directory Gradle would create if
-# you ran ./gradlew unsandboxed, locally, right now. We bind-mount this
-# directly into the container rather than using a `container volume` or a
-# shared host-wide cache directory. Why:
+# Each project's Gradle cache lives at its own .gradle/ directory inside
+# the project -- the same directory Gradle creates when run locally.
+# We bind-mount this directly into the container so that:
 #
-#   - `container volume` (apple's named-volume feature) hit two separate
-#     reliability problems when we tried it: a VZErrorDomain "storage
-#     device attachment is invalid" error, and a stuck "volume is currently
-#     in use" lock that persisted even after its container had already
-#     exited. It's a young feature (as of this writing, basic ergonomics
-#     like copying files in/out without a running container were still an
-#     open feature request upstream) -- not reliable enough yet for this.
-#
-#   - A single SHARED cache directory (one path reused across every
-#     project) was considered and rejected: if you have two clones of a
-#     repo (or two different repos) in different dependency states running
-#     agents in parallel, they'd fight over the same cache contents, and
-#     concurrent warmup runs could corrupt each other's in-progress
-#     downloads. Each project needs its OWN isolated cache, matching how
-#     Gradle already behaves when you run it unsandboxed.
-#
-#   - Reusing the project's real .gradle/ directory (rather than some
-#     separate sandbox-only cache dir) means: (a) a repo you've already
-#     built locally has an already-warm cache, so the warmup step below is
-#     often a fast no-op, and (b) there's no harm in reusing the real
-#     cache, since the agent is already editing the real project files via
-#     the /workspace mount -- the cache is just more of the same project
-#     state.
+#   - A repo already built locally starts with a warm cache (the warmup
+#     step below is often a fast no-op).
+#   - Each project gets its own isolated cache, so parallel agent runs
+#     across different repos don't interfere with each other.
+#   - The cache is just more project state alongside the /workspace mount.
 GRADLE_CACHE_DIR="$PROJECT_DIR/.gradle"
 
 # --------------------------------------------------------------------------
-# Network sandbox overview
+# Network sandbox
 #
-# Goal: the agent container must NOT be able to reach the open internet, but
-# DOES need to reach our local inference server, which lives on the Mac
-# host's "default" container network at 192.168.64.1:8080.
+# The agent container must NOT reach the open internet, but DOES need to
+# reach our local inference server on the Mac host at 192.168.64.1:8080.
+# We achieve this using three `container` networks and a small proxy:
 #
-# We tried doing this with a host-side pf (packet filter) firewall rule
-# first, blocking egress on the bridge interface apple `container` uses.
-# That doesn't work reliably -- pf does not consistently filter vmnet-bridged
-# traffic on recent macOS, so traffic slipped through unblocked.
+#   - "sandboxed" -- an internal network (no gateway to the internet or
+#     host). The agent container runs ONLY on this network.
 #
-# Instead we lean on `container`'s own network isolation, which doesn't rely
-# on a filter that could be bypassed -- it works by simply never creating a
-# route to the internet in the first place:
+#   - "default" -- the network `container` creates automatically. The
+#     inference server is reachable here at the host's vmnet gateway.
+#     The Gradle warmup run also uses this network since it needs real
+#     internet access to download dependencies.
 #
-#   - "sandboxed" is a `container network create --internal` network. Internal
-#     networks have no gateway out to the internet or the host's other
-#     networks, by construction. The agent runs ONLY on this network.
+#   - "egress-proxy" -- a small `socat` container dual-homed onto BOTH
+#     "sandboxed" and "default". It listens on its sandboxed-side IP and
+#     forwards everything to 192.168.64.1:8080 on the default side. This
+#     is the only bridge between the two networks, so the agent can reach
+#     the inference server but nothing else.
 #
-#   - "default" is the network `container` creates automatically. It's where
-#     our llama-server / inference host service is reachable, at the host's
-#     vmnet gateway address (currently 192.168.64.1). We ALSO use "default"
-#     for the one-off Gradle warmup run below, since that step genuinely
-#     needs real internet access to resolve dependencies.
+# The proxy's sandboxed IP is assigned dynamically, so models.json is a
+# template with placeholders that we render at launch time
+# (see render_config below).
 #
-#   - "egress-proxy" is a tiny container running `socat`, dual-homed onto
-#     BOTH "sandboxed" and "default". It listens on its "sandboxed"-side IP
-#     and forwards everything to 192.168.64.1:8080 on the "default" side.
-#     This is the ONLY bridge between the two networks, and it only forwards
-#     to one specific host:port -- so the agent can reach the inference
-#     server, but nothing else "default" can see, and nothing on the internet.
-#
-# Because the proxy's IP on the "sandboxed" network is assigned dynamically
-# each time it starts, we can't hardcode it anywhere persistent (like
-# models.json checked into git). Instead, models.json is a *template* with a
-# placeholder, and we render the real IP into a generated copy at launch
-# time (see render_config below).
-#
-# The egress-proxy container is deliberately NOT torn down when this script
-# exits. We run multiple agent sessions in parallel (e.g. one per project),
-# and they all share the same proxy -- tearing it down when any one session
-# ends would break the others still running. ensure_egress_proxy() below
-# just checks if it's already up and reuses it; only starts a fresh one if
-# it's missing or stopped.
+# The egress-proxy container is shared across parallel agent sessions and
+# is NOT torn down when this script exits. ensure_egress_proxy() checks
+# if it's already running and reuses it.
 # --------------------------------------------------------------------------
 
 INFERENCE_SERVER_HOST_IP="192.168.64.1"
@@ -172,16 +135,10 @@ render_config() {
       "$REPO_ROOT/pi-config/models.json.template" > "$out_dir/models.json"
 }
 
-# Pre-populates this PROJECT's .gradle cache if the project has a Gradle
-# wrapper. Runs on the "default" network (real internet access) so the
-# wrapper distribution and dependencies can be downloaded -- then the
-# sandboxed agent run later reuses that same now-warm .gradle/ via a plain
-# bind mount, with no network access needed at that point.
-#
-# This is just a bind mount, not a `container volume` -- see the
-# GRADLE_CACHE_DIR comment up top for why. Bind mounts have no "in use" /
-# "attached" state to get stuck on, so unlike volumes, there's nothing here
-# that needs existence checks, corruption recovery, or cleanup.
+# Pre-populates this project's .gradle cache if it has a Gradle wrapper.
+# Runs on the "default" network (real internet access) so the wrapper
+# distribution and dependencies can be downloaded. The sandboxed agent run
+# later reuses that same now-warm .gradle/ via a bind mount.
 warm_gradle_if_needed() {
   if [ ! -f "$PROJECT_DIR/gradlew" ]; then
     return 0
@@ -192,39 +149,23 @@ warm_gradle_if_needed() {
 
   echo "Gradle project detected. Warming cache at $GRADLE_CACHE_DIR (fast if already warm)..." >&2
 
-  # --entrypoint bash overrides the image's default ENTRYPOINT
-  # (entrypoint.sh, which runs `pi`) just for this one call. Without this,
-  # the trailing "bash -c ..." below gets passed as arguments TO
-  # entrypoint.sh's `pi "$@"` line instead of being run directly -- pi would
-  # try (and fail) to interpret "bash" as a model/provider argument.
+  # --entrypoint bash: overrides the image's default ENTRYPOINT so our
+  # "bash -c ..." command runs directly instead of being passed to `pi`.
   #
-  # --no-daemon: this is a one-shot, --rm container -- a Gradle daemon's
-  # whole purpose is staying alive across multiple builds to make
-  # SUBSEQUENT builds faster, which a throwaway container never benefits
-  # from. Daemon startup/teardown also adds its own resource overhead and
-  # has been a source of confusing hangs in constrained environments.
+  # --stacktrace: show the actual cause on failure instead of a one-line
+  # summary.
   #
-  # --stacktrace: if something fails, show the actual cause instead of a
-  # one-line summary.
+  # --cpus / --memory: bumped up from the image default (4 CPU / 1GiB) --
+  # 1GiB is tight for a JVM build and can cause silent stalls.
   #
-  # --cpus / --memory: bumped up from this image's default (4 CPU / 1GiB)
-  # -- 1GiB is tight for a JVM build with Kotlin/buildSrc compilation, and
-  # memory pressure can cause exactly this symptom (visible progress, then
-  # a silent-looking stall) without Gradle printing a clear error.
-  # --continue: keep going past a failed task instead of stopping at the
-  # first one. This matters because the project might currently have
-  # compile errors -- that's a legitimate reason someone would spin up the
-  # agent in the first place (to fix them). We still want to resolve and
-  # cache as many dependencies as possible even when some tasks fail.
+  # --continue: keep going past failed tasks. The project might have
+  # compile errors (which is why the agent was launched), but we still
+  # want to resolve and cache as many dependencies as possible.
   #
-  # We deliberately do NOT exit 1 on failure here. A failed *build* (due to
-  # the project's own compile errors) is not a reason to block the agent
-  # from launching -- only a failure to download/resolve dependencies
-  # (a real network/cache problem) would actually leave the agent stuck
-  # later. Since we can't always cleanly distinguish those from the exit
-  # code alone, we treat ANY warmup failure as non-fatal: warn, and launch
-  # the agent anyway. Worst case, the agent sees the same build failure you
-  # would, with whatever dependencies COULD be resolved already cached.
+  # We do NOT exit 1 on failure: a build failure from the project's own
+  # compile errors is not a reason to block the agent. A dependency
+  # download failure would be, but since we can't cleanly distinguish
+  # those from the exit code alone, we warn and launch the agent anyway.
   if ! container run --rm \
     --network default \
     --entrypoint bash \
