@@ -1,20 +1,13 @@
 # Pi Coding Agent inside an Apple container.
 #
-# Base: official Eclipse Temurin JDK image (built directly by the people who
-# produce the JDK distribution itself), with Node.js copied in from the
-# official Node image. pi installed globally via npm, /workspace as the
-# mount target for the respective project, and whatever other build tools
-# we need.
+# Base: official Eclipse Temurin JDK image (built by the Eclipse Foundation,
+# the same people who produce the JDK), with Node.js binaries copied in from
+# the official Node image. pi is installed globally via npm, /workspace is
+# the mount point for the project, and additional build tools are installed
+# as needed.
 #
-# Why this base instead of node:22-bookworm-slim + a hand-added JDK repo:
-# we previously installed Java by adding Eclipse Adoptium's third-party apt
-# repository (fetching a GPG key, writing a sources file, detecting the
-# Debian codename, etc.) on top of a Node base image. That worked, but had
-# a lot of moving parts that could break on a future rebuild (key rotation,
-# repo URL changes, etc). Flipping it around -- starting FROM the official
-# JDK image, and just copying Node's binaries in -- removes all of that:
-# both runtimes now come from their own official, purpose-built images, and
-# neither requires us to configure a third-party package repo by hand.
+# Both Java and Node come from their own official, purpose-built images.
+# This avoids the need to configure any third-party package repositories.
 # --------------------------------------------------------------------------
 
 # This first FROM is a *build-stage-only* source of Node.js binaries. It is
@@ -26,19 +19,15 @@
 # actually becomes the image you end up running.
 FROM node:22-bookworm-slim AS node-source
 
-# This is the REAL base for our final image: Eclipse Temurin's official JDK
-# image. Under the hood this is Ubuntu 22.04 ("jammy"), so it's still
-# Debian-family apt packaging underneath -- package names like `zip`,
-# `jq`, `python3`, `gcc` etc. later in this file work exactly the same way
-# they would on the old Debian "bookworm" base.
+# This is the base for our final image: Eclipse Temurin's official JDK
+# image. It runs on Ubuntu 22.04 ("jammy"), which uses Debian-style apt
+# packaging. All standard Debian/Ubuntu package names work as expected.
 FROM eclipse-temurin:21-jdk-jammy
 
 # --------------------------------------------------------------------------
-# Bring Node.js + npm into this image by copying them straight out of the
-# node-source stage above, instead of installing Node via apt (which would
-# mean adding NodeSource's own third-party repo -- the same kind of
-# complexity we just removed for Java) or a curl-pipe-to-shell install
-# script (fragile and a bit risky to trust blindly).
+# Bring Node.js + npm into this image by copying the binaries straight out
+# of the node-source stage above. This keeps Node coming from its official
+# image without needing a third-party repo or an install script.
 # --------------------------------------------------------------------------
 COPY --from=node-source /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-source /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -96,9 +85,8 @@ RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@${PI_VERSION
 
 ARG PI_UID=1000
 ARG PI_GID=1000
-# Unlike the node:22 base image, eclipse-temurin doesn't pre-create a user
-# at UID/GID 1000 -- so there's nothing to remove here first. We just
-# create the 'pi' user/group directly.
+# The eclipse-temurin base image does not pre-create a user at UID/GID 1000,
+# so we create the 'pi' user and group from scratch.
 RUN groupadd --gid ${PI_GID} pi \
  && useradd --uid ${PI_UID} --gid ${PI_GID} --create-home --shell /bin/bash pi
 
