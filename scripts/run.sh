@@ -35,6 +35,12 @@ PROJECT_NAME="$(basename "$PROJECT_DIR")"
 #   - The cache is just more project state alongside the /workspace mount.
 GRADLE_CACHE_DIR="$PROJECT_DIR/.gradle"
 
+# Path to the Gradle warmup script. Defaults to the bundled script at
+# scripts/gradle-warmup.sh (copied into the image at /usr/local/bin/gradle-warmup.sh).
+# Set this to any script (absolute or relative to cwd) to customize the warmup.
+# The script is bind-mounted into the container and run from /workspace.
+GRADLE_WARMUP_SCRIPT="${GRADLE_WARMUP_SCRIPT:-$REPO_ROOT/scripts/gradle-warmup.sh}"
+
 # --------------------------------------------------------------------------
 # Network sandbox
 #
@@ -150,18 +156,26 @@ warm_gradle_if_needed() {
 
   echo "Gradle project detected. Warming cache at $GRADLE_CACHE_DIR (fast if already warm)..." >&2
 
+  # Resolve the warmup script to an absolute path.
+  local warmup_script="$GRADLE_WARMUP_SCRIPT"
+  if [[ "$warmup_script" != /* ]]; then
+    warmup_script="$(cd "$(dirname "$warmup_script")" && pwd)/$(basename "$warmup_script")"
+  fi
+
+  if [ ! -f "$warmup_script" ]; then
+    echo "WARNING: Gradle warmup script not found at $warmup_script" >&2
+    echo "Skipping Gradle warmup." >&2
+    return 0
+  fi
+
   # --entrypoint bash: overrides the image's default ENTRYPOINT so our
-  # "bash -c ..." command runs directly instead of being passed to `pi`.
-  #
-  # --stacktrace: show the actual cause on failure instead of a one-line
-  # summary.
+  # script runs directly instead of being passed to `pi`.
   #
   # --cpus / --memory: bumped up from the image default (4 CPU / 1GiB) --
   # 1GiB is tight for a JVM build and can cause silent stalls.
   #
-  # --continue: keep going past failed tasks. The project might have
-  # compile errors (which is why the agent was launched), but we still
-  # want to resolve and cache as many dependencies as possible.
+  # We bind-mount the warmup script into the container at /tmp/gradle-warmup.sh
+  # so that custom scripts (outside the image) are available at runtime.
   #
   # We do NOT exit 1 on failure: a build failure from the project's own
   # compile errors is not a reason to block the agent. A dependency
@@ -174,9 +188,10 @@ warm_gradle_if_needed() {
     --memory 4g \
     --volume "$GRADLE_CACHE_DIR:/home/pi/.gradle" \
     --volume "$PROJECT_DIR:/workspace" \
+    --volume "$warmup_script:/tmp/gradle-warmup.sh:ro" \
     --workdir /workspace \
     "$IMAGE_TAG" \
-    -c "./gradlew --stacktrace --continue build -x test"; then
+    -c "/tmp/gradle-warmup.sh"; then
     echo "Gradle warmup did not complete successfully -- this is OK if the" >&2
     echo "project currently has compile errors you're about to fix. If" >&2
     echo "dependencies genuinely failed to download (network/registry" >&2
