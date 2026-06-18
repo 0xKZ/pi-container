@@ -91,9 +91,11 @@ function pi-agent --description "Run pi-coding-agent sandboxed, using the curren
     # Only inject the default model if the caller didn't already pass
     # --model themselves -- lets you override per-call without editing
     # any config, e.g. `pi-agent --model some-other-model`.
+    # Append at the end (not prepend) so that run.sh's arg parser sees
+    # user-provided flags like --with-internet before hitting --model.
     if set -q PI_SANDBOX_DEFAULT_MODEL
         if not contains -- --model $args
-            set args --model $PI_SANDBOX_DEFAULT_MODEL $args
+            set args $args --model $PI_SANDBOX_DEFAULT_MODEL
         end
     end
 
@@ -102,6 +104,10 @@ end
 ```
 
 Now you are good to go. Simply run `pi-agent` inside of the directory of whatever project you want the agent to work in, and a container will be spun up to do so. Use `pi-agent --shell` to launch into a terminal instead of the agent for testing the networking sandbox (upon updating container versions for example).
+
+### Running with internet access
+
+Use `pi-agent --with-internet` to launch the container on the `default` network with full internet access. This also skips the Gradle warmup step since the container can download dependencies on its own.
 
 # Original inspiration
 

@@ -75,12 +75,21 @@ INFERENCE_SERVER_HOST_IP="192.168.64.1"
 INFERENCE_SERVER_HOST_PORT="8080"
 
 # --shell drops into an interactive shell instead of launching pi, with the
-# same network + mounts the agent itself would get. Must be the first arg.
+# same network + mounts the agent itself would get.
+# --with-internet uses the "default" network (full internet access) instead
+# of the "sandboxed" network, and skips the Gradle warmup step.
+# These flags can appear in any position among the arguments.
 SHELL_MODE=false
-if [ "${1:-}" = "--shell" ]; then
-  SHELL_MODE=true
-  shift
-fi
+WITH_INTERNET=false
+REMAINING_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --shell) SHELL_MODE=true; shift ;;
+    --with-internet) WITH_INTERNET=true; shift ;;
+    *) REMAINING_ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${REMAINING_ARGS[@]}"
 
 if [ ! -d "$PROJECT_DIR" ]; then
   echo "PROJECT_DIR='$PROJECT_DIR' does not exist." >&2
@@ -123,8 +132,9 @@ ensure_egress_proxy() {
 # Reads back the proxy's address on the "sandboxed" side specifically (it
 # has a different address on each of its two networks -- we want the one
 # the agent container can actually route to).
-get_sandboxed_ip() {
-  container inspect "$1" | jq -r '.[0].status.networks[] | select(.network == "sandboxed") | .ipv4Address' | cut -d/ -f1
+get_proxy_ip() {
+  local container_name="$1" network="$2"
+  container inspect "$container_name" | jq -r ".[0].status.networks[] | select(.network == \"${network}\") | .ipv4Address" | cut -d/ -f1
 }
 
 # Builds the config dir we'll mount as /home/pi/.pi/agent. Copies everything
@@ -204,7 +214,11 @@ warm_gradle_if_needed() {
 
 ensure_sandboxed_network
 ensure_egress_proxy "$INFERENCE_SERVER_HOST_IP" "$INFERENCE_SERVER_HOST_PORT"
-EGRESS_PROXY_IP="$(get_sandboxed_ip egress-proxy)"
+if [ "$WITH_INTERNET" = true ]; then
+  EGRESS_PROXY_IP="$(get_proxy_ip egress-proxy default)"
+else
+  EGRESS_PROXY_IP="$(get_proxy_ip egress-proxy sandboxed)"
+fi
 
 if [ -z "$EGRESS_PROXY_IP" ]; then
   echo "Failed to determine egress-proxy sandboxed-network IP." >&2
@@ -222,7 +236,9 @@ render_config "$EGRESS_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG
 # never try to mount a .gradle directory that was never created.
 IS_GRADLE_PROJECT=false
 
-warm_gradle_if_needed
+if [ "$WITH_INTERNET" != true ]; then
+  warm_gradle_if_needed
+fi
 
 # Only mount .gradle when this is actually a Gradle project -- otherwise
 # GRADLE_CACHE_DIR was never created (warm_gradle_if_needed returned early
@@ -234,9 +250,13 @@ if [ "$IS_GRADLE_PROJECT" = true ]; then
 fi
 
 if [ "$SHELL_MODE" = true ]; then
-  echo "Shell mode: sandboxed network, proxy reachable at ${EGRESS_PROXY_IP}:${INFERENCE_SERVER_HOST_PORT}" >&2
+  local_network_label="sandboxed"
+  if [ "$WITH_INTERNET" = true ]; then
+    local_network_label="default (internet access)"
+  fi
+  echo "Shell mode: ${local_network_label} network, proxy reachable at ${EGRESS_PROXY_IP}:${INFERENCE_SERVER_HOST_PORT}" >&2
   container run --rm -it \
-    --network sandboxed \
+    --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
     --entrypoint sh \
     --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
     "${GRADLE_VOLUME_ARGS[@]}" \
@@ -252,7 +272,7 @@ fi
 
 container run \
   --name "pi-${PROJECT_NAME}" \
-  --network sandboxed \
+  --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
   --rm \
   --interactive \
   --tty \
