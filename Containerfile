@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg imagemagick \
     python3 python3-pip \
     gcc g++ clang make cmake \
+    gdb strace \
     wget \
     xxd bsdmainutils file \
     tree bat fd-find \
