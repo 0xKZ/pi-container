@@ -23,6 +23,37 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 
+# Each project's Gradle cache lives at its own real .gradle/ directory,
+# right inside that project -- the SAME directory Gradle would create if
+# you ran ./gradlew unsandboxed, locally, right now. We bind-mount this
+# directly into the container rather than using a `container volume` or a
+# shared host-wide cache directory. Why:
+#
+#   - `container volume` (apple's named-volume feature) hit two separate
+#     reliability problems when we tried it: a VZErrorDomain "storage
+#     device attachment is invalid" error, and a stuck "volume is currently
+#     in use" lock that persisted even after its container had already
+#     exited. It's a young feature (as of this writing, basic ergonomics
+#     like copying files in/out without a running container were still an
+#     open feature request upstream) -- not reliable enough yet for this.
+#
+#   - A single SHARED cache directory (one path reused across every
+#     project) was considered and rejected: if you have two clones of a
+#     repo (or two different repos) in different dependency states running
+#     agents in parallel, they'd fight over the same cache contents, and
+#     concurrent warmup runs could corrupt each other's in-progress
+#     downloads. Each project needs its OWN isolated cache, matching how
+#     Gradle already behaves when you run it unsandboxed.
+#
+#   - Reusing the project's real .gradle/ directory (rather than some
+#     separate sandbox-only cache dir) means: (a) a repo you've already
+#     built locally has an already-warm cache, so the warmup step below is
+#     often a fast no-op, and (b) there's no harm in reusing the real
+#     cache, since the agent is already editing the real project files via
+#     the /workspace mount -- the cache is just more of the same project
+#     state.
+GRADLE_CACHE_DIR="$PROJECT_DIR/.gradle"
+
 # --------------------------------------------------------------------------
 # Network sandbox overview
 #
@@ -45,7 +76,9 @@ PROJECT_NAME="$(basename "$PROJECT_DIR")"
 #
 #   - "default" is the network `container` creates automatically. It's where
 #     our llama-server / inference host service is reachable, at the host's
-#     vmnet gateway address (currently 192.168.64.1).
+#     vmnet gateway address (currently 192.168.64.1). We ALSO use "default"
+#     for the one-off Gradle warmup run below, since that step genuinely
+#     needs real internet access to resolve dependencies.
 #
 #   - "egress-proxy" is a tiny container running `socat`, dual-homed onto
 #     BOTH "sandboxed" and "default". It listens on its "sandboxed"-side IP
@@ -139,6 +172,79 @@ render_config() {
       "$REPO_ROOT/pi-config/models.json.template" > "$out_dir/models.json"
 }
 
+# Pre-populates this PROJECT's .gradle cache if the project has a Gradle
+# wrapper. Runs on the "default" network (real internet access) so the
+# wrapper distribution and dependencies can be downloaded -- then the
+# sandboxed agent run later reuses that same now-warm .gradle/ via a plain
+# bind mount, with no network access needed at that point.
+#
+# This is just a bind mount, not a `container volume` -- see the
+# GRADLE_CACHE_DIR comment up top for why. Bind mounts have no "in use" /
+# "attached" state to get stuck on, so unlike volumes, there's nothing here
+# that needs existence checks, corruption recovery, or cleanup.
+warm_gradle_if_needed() {
+  if [ ! -f "$PROJECT_DIR/gradlew" ]; then
+    return 0
+  fi
+
+  IS_GRADLE_PROJECT=true
+  mkdir -p "$GRADLE_CACHE_DIR"
+
+  echo "Gradle project detected. Warming cache at $GRADLE_CACHE_DIR (fast if already warm)..." >&2
+
+  # --entrypoint bash overrides the image's default ENTRYPOINT
+  # (entrypoint.sh, which runs `pi`) just for this one call. Without this,
+  # the trailing "bash -c ..." below gets passed as arguments TO
+  # entrypoint.sh's `pi "$@"` line instead of being run directly -- pi would
+  # try (and fail) to interpret "bash" as a model/provider argument.
+  #
+  # --no-daemon: this is a one-shot, --rm container -- a Gradle daemon's
+  # whole purpose is staying alive across multiple builds to make
+  # SUBSEQUENT builds faster, which a throwaway container never benefits
+  # from. Daemon startup/teardown also adds its own resource overhead and
+  # has been a source of confusing hangs in constrained environments.
+  #
+  # --stacktrace: if something fails, show the actual cause instead of a
+  # one-line summary.
+  #
+  # --cpus / --memory: bumped up from this image's default (4 CPU / 1GiB)
+  # -- 1GiB is tight for a JVM build with Kotlin/buildSrc compilation, and
+  # memory pressure can cause exactly this symptom (visible progress, then
+  # a silent-looking stall) without Gradle printing a clear error.
+  # --continue: keep going past a failed task instead of stopping at the
+  # first one. This matters because the project might currently have
+  # compile errors -- that's a legitimate reason someone would spin up the
+  # agent in the first place (to fix them). We still want to resolve and
+  # cache as many dependencies as possible even when some tasks fail.
+  #
+  # We deliberately do NOT exit 1 on failure here. A failed *build* (due to
+  # the project's own compile errors) is not a reason to block the agent
+  # from launching -- only a failure to download/resolve dependencies
+  # (a real network/cache problem) would actually leave the agent stuck
+  # later. Since we can't always cleanly distinguish those from the exit
+  # code alone, we treat ANY warmup failure as non-fatal: warn, and launch
+  # the agent anyway. Worst case, the agent sees the same build failure you
+  # would, with whatever dependencies COULD be resolved already cached.
+  if ! container run --rm \
+    --network default \
+    --entrypoint bash \
+    --cpus 4 \
+    --memory 4g \
+    --volume "$GRADLE_CACHE_DIR:/home/pi/.gradle" \
+    --volume "$PROJECT_DIR:/workspace" \
+    --workdir /workspace \
+    "$IMAGE_TAG" \
+    -c "./gradlew --stacktrace --continue build -x test"; then
+    echo "Gradle warmup did not complete successfully -- this is OK if the" >&2
+    echo "project currently has compile errors you're about to fix. If" >&2
+    echo "dependencies genuinely failed to download (network/registry" >&2
+    echo "issue), the agent may still hit missing-dependency errors once" >&2
+    echo "sandboxed. See output above for details." >&2
+  else
+    echo "Gradle cache warmed." >&2
+  fi
+}
+
 ensure_sandboxed_network
 ensure_egress_proxy "$INFERENCE_SERVER_HOST_IP" "$INFERENCE_SERVER_HOST_PORT"
 EGRESS_PROXY_IP="$(get_sandboxed_ip egress-proxy)"
@@ -154,12 +260,29 @@ fi
 RENDERED_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pi-config.XXXXXX")"
 render_config "$EGRESS_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR"
 
+# Whether $PROJECT_DIR actually has a Gradle wrapper -- set to true inside
+# warm_gradle_if_needed if so. Defaults to false so that non-Gradle projects
+# never try to mount a .gradle directory that was never created.
+IS_GRADLE_PROJECT=false
+
+warm_gradle_if_needed
+
+# Only mount .gradle when this is actually a Gradle project -- otherwise
+# GRADLE_CACHE_DIR was never created (warm_gradle_if_needed returned early
+# without an mkdir), and passing --volume with a source path that doesn't
+# exist makes `container run` fail outright rather than just skipping it.
+GRADLE_VOLUME_ARGS=()
+if [ "$IS_GRADLE_PROJECT" = true ]; then
+  GRADLE_VOLUME_ARGS=(--volume "$GRADLE_CACHE_DIR:/home/pi/.gradle")
+fi
+
 if [ "$SHELL_MODE" = true ]; then
   echo "Shell mode: sandboxed network, proxy reachable at ${EGRESS_PROXY_IP}:${INFERENCE_SERVER_HOST_PORT}" >&2
   container run --rm -it \
     --network sandboxed \
     --entrypoint sh \
     --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
+    "${GRADLE_VOLUME_ARGS[@]}" \
     --volume "$PROJECT_DIR:/workspace" \
     --workdir /workspace \
     --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
@@ -170,12 +293,16 @@ if [ "$SHELL_MODE" = true ]; then
   exit 0
 fi
 
+# TODO(zach): Make the memory a parameter w/ default
+# TODO(zach): Add a `--name` parameter derived from project path
 container run \
   --network sandboxed \
   --rm \
   --interactive \
   --tty \
+  --memory 6g \
   --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
+  "${GRADLE_VOLUME_ARGS[@]}" \
   --volume "$PROJECT_DIR:/workspace" \
   --workdir /workspace \
   --env "PROJECT_NAME=$PROJECT_NAME" \
