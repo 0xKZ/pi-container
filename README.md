@@ -5,7 +5,6 @@ A wrapper that configures an Apple container that it then runs a pi coding agent
 
 # Usage
 
-
 ## Build the VM image (only need to do this once, on the host machine):
 
 `./scripts/build.sh`
