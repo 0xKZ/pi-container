@@ -1,8 +1,8 @@
-# Pi writes session history and possibly other runtime data into the
-# mounted config directory. Do not version it.
-pi-config/sessions/
-pi-config/cache/
-pi-config/logs/
+# Pi writes session history into `.pi/sessions/` inside each project
+# directory (configured via sessionDir in pi-config/settings.json).
+# Projects should gitignore their own `.pi/` if they don't want sessions
+# in version control.
+.pi
 
 # macOS cruft
 .DS_Store

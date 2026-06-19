@@ -109,6 +109,12 @@ Now you are good to go. Simply run `pi-agent` inside of the directory of whateve
 
 Use `pi-agent --with-internet` to launch the container on the `default` network with full internet access. This also skips the Gradle warmup step since the container can download dependencies on its own.
 
+## Session Persistence
+
+Pi sessions (conversation history) are stored in `.pi/sessions/` inside each project directory. This is configured via `sessionDir` in `pi-config/settings.json`. Because the project directory is bind-mounted into the container, sessions persist across container restarts and can be resumed with `pi -c` or `pi -r`.
+
+Each project gets its own isolated session store. The `.pi/` directory is meant to be gitignored by the project itself (not this repo) if you don't want session data in version control.
+
 # Original inspiration
 
 Originally based on https://github.com/michaelhannecke/pi-container

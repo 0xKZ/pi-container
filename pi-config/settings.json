@@ -1,3 +1,4 @@
 {
-  "theme": "gruvbox-dark-hard"
+  "theme": "gruvbox-dark-hard",
+  "sessionDir": ".pi/sessions"
 }

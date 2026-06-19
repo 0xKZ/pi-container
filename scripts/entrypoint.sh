@@ -21,7 +21,7 @@ pi "$@"
 PI_EXIT_CODE=$?
 
 echo ""
-echo "pi exited (code ${PI_EXIT_CODE}). Dropping into a shell -- exit this to stop the container (note: will wipe your pi sessions)."
+echo "pi exited (code ${PI_EXIT_CODE}). Dropping into a shell -- exit this to stop the container."
 echo ""
 
 
