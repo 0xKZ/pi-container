@@ -4,7 +4,7 @@
 #
 # Expects two mounts:
 #   - pi-config/    -> /home/pi/.pi/agent  (provider config, AGENTS.md, extensions)
-#   - $PROJECT_DIR  -> /workspace          (the project to work on)
+#   - $PROJECT_DIR  -> /projects/<name>    (the project to work on, name = basename of PROJECT_DIR)
 #
 # Example:
 #   PROJECT_DIR=~/projects/small-test-repo ./scripts/run.sh --model llama-local/Qwen3.6-27B
@@ -197,9 +197,9 @@ warm_gradle_if_needed() {
     --cpus 4 \
     --memory 4g \
     --volume "$GRADLE_CACHE_DIR:/home/pi/.gradle" \
-    --volume "$PROJECT_DIR:/workspace" \
+    --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
     --volume "$warmup_script:/tmp/gradle-warmup.sh:ro" \
-    --workdir /workspace \
+    --workdir "/projects/$PROJECT_NAME" \
     "$IMAGE_TAG" \
     -c "/tmp/gradle-warmup.sh"; then
     echo "Gradle warmup did not complete successfully -- this is OK if the" >&2
@@ -260,8 +260,8 @@ if [ "$SHELL_MODE" = true ]; then
     --entrypoint sh \
     --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
     "${GRADLE_VOLUME_ARGS[@]}" \
-    --volume "$PROJECT_DIR:/workspace" \
-    --workdir /workspace \
+    --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
+    --workdir "/projects/$PROJECT_NAME" \
     --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
     --env "PROJECT_NAME=$PROJECT_NAME" \
     "$IMAGE_TAG" \
@@ -279,8 +279,8 @@ container run \
   --memory "$MEMORY" \
   --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
   "${GRADLE_VOLUME_ARGS[@]}" \
-  --volume "$PROJECT_DIR:/workspace" \
-  --workdir /workspace \
+  --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
+  --workdir "/projects/$PROJECT_NAME" \
   --env "PROJECT_NAME=$PROJECT_NAME" \
   "$IMAGE_TAG" \
   "$@"

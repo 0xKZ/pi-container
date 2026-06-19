@@ -9,18 +9,25 @@
 # container.
 
 
+# Navigate to the project-specific directory so pi's footer and terminal
+# title show the project name instead of a generic "/workspace".
+# PROJECT_NAME is passed in from run.sh via --env.
+if [ -n "${PROJECT_NAME}" ] && [ -d "/projects/${PROJECT_NAME}" ]; then
+    cd "/projects/${PROJECT_NAME}"
+fi
+
 # pi reads ~/.pi/agent/* at runtime; the directory is mounted via a volume.
 pi "$@"
 PI_EXIT_CODE=$?
 
-echo "" 
+echo ""
 echo "pi exited (code ${PI_EXIT_CODE}). Dropping into a shell -- exit this to stop the container (note: will wipe your pi sessions)."
 echo ""
 
 
 # Custom prompt so this shell is easy to spot among many open terminal
 # windows/sessions. PROJECT_NAME is passed in from run.sh via --env, since
-# this container only sees /workspace, not the host path or its name.
+# this container only sees /projects/<name>, not the host path.
 export PS1="(AGENT-SANDBOX-${PROJECT_NAME:-unknown}) \w \$ "
 
 exec bash --norc

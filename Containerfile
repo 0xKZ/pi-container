@@ -114,6 +114,6 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # entrypoint.sh). Everything below this line, and everything that happens
 # at container *runtime*, runs as 'pi', not root.
 USER pi
-WORKDIR /workspace
+WORKDIR /projects
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
