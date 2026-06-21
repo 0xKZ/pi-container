@@ -96,6 +96,18 @@ if [ ! -d "$PROJECT_DIR" ]; then
   exit 1
 fi
 
+# Ensures the container daemon (container-apiserver) is running.
+# `container system status` sends a health check to the API server;
+# it exits non-zero when the service is not up. If so, we start it.
+ensure_container_service() {
+  if container system status >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Container service is not running. Starting..." >&2
+  container system start
+}
+
 # Creates the internal (no-internet-route) network if it doesn't already
 # exist. Safe to call every run -- no-ops once the network is there.
 ensure_sandboxed_network() {
@@ -212,6 +224,7 @@ warm_gradle_if_needed() {
   fi
 }
 
+ensure_container_service
 ensure_sandboxed_network
 ensure_egress_proxy "$INFERENCE_SERVER_HOST_IP" "$INFERENCE_SERVER_HOST_PORT"
 if [ "$WITH_INTERNET" = true ]; then
