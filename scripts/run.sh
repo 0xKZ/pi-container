@@ -155,13 +155,19 @@ get_proxy_ip() {
 # dir per run (rather than editing pi-config/models.json in place) so that:
 #   (a) parallel sessions never stomp on each other's rendered config, and
 #   (b) the checked-in template never gets overwritten with a stale IP.
+# If with_internet is "false", appends a no-internet notice to APPEND_SYSTEM.md.
 render_config() {
-  local proxy_ip="$1" proxy_port="$2" out_dir="$3"
+  local proxy_ip="$1" proxy_port="$2" out_dir="$3" with_internet="$4"
   mkdir -p "$out_dir"
   cp -R "$REPO_ROOT/pi-config/." "$out_dir/"
   sed -e "s/__EGRESS_PROXY_IP__/${proxy_ip}/g" \
       -e "s/__EGRESS_PROXY_PORT__/${proxy_port}/g" \
       "$REPO_ROOT/pi-config/models.json.template" > "$out_dir/models.json"
+  if [ "$with_internet" != true ]; then
+    printf '\n> **No internet access is available.** Do not attempt to make
+> network requests, fetch URLs, or install packages from remote registries.\n' \
+      >> "$out_dir/APPEND_SYSTEM.md"
+  fi
 }
 
 # Pre-populates this project's .gradle cache if it has a Gradle wrapper.
@@ -242,7 +248,7 @@ fi
 # it, so the --shell environment matches the real agent run as closely as
 # possible (same mounts, same rendered models.json, same network).
 RENDERED_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pi-config.XXXXXX")"
-render_config "$EGRESS_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR"
+render_config "$EGRESS_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET"
 
 # Whether $PROJECT_DIR actually has a Gradle wrapper -- set to true inside
 # warm_gradle_if_needed if so. Defaults to false so that non-Gradle projects
