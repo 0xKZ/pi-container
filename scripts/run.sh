@@ -24,16 +24,21 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 
-# Each project's Gradle cache lives at its own .gradle/ directory inside
-# the project -- the same directory Gradle creates when run locally.
-# We bind-mount this directly into the container so that:
+# We do NOT bind-mount the project's .gradle/ into the container.
+# Gradle (especially Spotless) stores absolute paths in its cache.
+# Sharing the cache between container (/projects/...) and host
+# (/Users/...) causes "target files must be within project dir" errors
+# when the host reads container-written cache entries with stale paths.
 #
-#   - A repo already built locally starts with a warm cache (the warmup
-#     step below is often a fast no-op).
-#   - Each project gets its own isolated cache, so parallel agent runs
-#     across different repos don't interfere with each other.
-#   - The cache is just more project state alongside the /workspace mount.
-GRADLE_CACHE_DIR="$PROJECT_DIR/.gradle"
+# Instead, we use a container-dedicated Gradle cache on the host at
+# $CONTAINER_GRADLE_CACHE/<project-name>. This directory is:
+#   - Outside the project tree, so the host's Gradle never finds it
+#   - Bind-mounted as GRADLE_USER_HOME in the container, so Gradle inside
+#     the container uses it exclusively
+#   - Shared between the warmup and agent containers, so the warmup's
+#     dependency downloads are available to the sandboxed agent run
+CONTAINER_GRADLE_CACHE="${HOME}/.pi-container-gradle"
+CONTAINER_GRADLE_CACHE_PROJECT="${CONTAINER_GRADLE_CACHE}/${PROJECT_NAME}"
 
 # Path to the Gradle warmup script. Defaults to the bundled script at
 # scripts/gradle-warmup.sh (copied into the image at /usr/local/bin/gradle-warmup.sh).
@@ -170,19 +175,17 @@ render_config() {
   fi
 }
 
-# Pre-populates this project's .gradle cache if it has a Gradle wrapper.
+# Pre-downloads Gradle dependencies if the project has a Gradle wrapper.
 # Runs on the "default" network (real internet access) so the wrapper
 # distribution and dependencies can be downloaded. The sandboxed agent run
-# later reuses that same now-warm .gradle/ via a bind mount.
+# later reuses the same container-dedicated Gradle cache via bind mount.
 warm_gradle_if_needed() {
   if [ ! -f "$PROJECT_DIR/gradlew" ]; then
     return 0
   fi
 
-  IS_GRADLE_PROJECT=true
-  mkdir -p "$GRADLE_CACHE_DIR"
-
-  echo "Gradle project detected. Warming cache at $GRADLE_CACHE_DIR (fast if already warm)..." >&2
+  mkdir -p "$CONTAINER_GRADLE_CACHE_PROJECT"
+  echo "Gradle project detected. Warming cache at $CONTAINER_GRADLE_CACHE_PROJECT..." >&2
 
   # Resolve the warmup script to an absolute path.
   local warmup_script="$GRADLE_WARMUP_SCRIPT"
@@ -202,6 +205,11 @@ warm_gradle_if_needed() {
   # --cpus / --memory: bumped up from the image default (4 CPU / 1GiB) --
   # 1GiB is tight for a JVM build and can cause silent stalls.
   #
+  # We bind-mount the container-dedicated Gradle cache as GRADLE_USER_HOME
+  # so that Gradle uses it instead of the default ~/.gradle/ or the project's
+  # .gradle/. This cache lives outside the project tree, so the host's Gradle
+  # never reads it and there are no stale absolute-path conflicts.
+  #
   # We bind-mount the warmup script into the container at /tmp/gradle-warmup.sh
   # so that custom scripts (outside the image) are available at runtime.
   #
@@ -214,10 +222,11 @@ warm_gradle_if_needed() {
     --entrypoint bash \
     --cpus 4 \
     --memory 4g \
-    --volume "$GRADLE_CACHE_DIR:/home/pi/.gradle" \
+    --volume "$CONTAINER_GRADLE_CACHE_PROJECT:/home/pi/.gradle" \
     --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
     --volume "$warmup_script:/tmp/gradle-warmup.sh:ro" \
     --workdir "/projects/$PROJECT_NAME" \
+    --env "GRADLE_USER_HOME=/home/pi/.gradle" \
     "$IMAGE_TAG" \
     -c "/tmp/gradle-warmup.sh"; then
     echo "Gradle warmup did not complete successfully -- this is OK if the" >&2
@@ -250,22 +259,15 @@ fi
 RENDERED_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pi-config.XXXXXX")"
 render_config "$EGRESS_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET"
 
-# Whether $PROJECT_DIR actually has a Gradle wrapper -- set to true inside
-# warm_gradle_if_needed if so. Defaults to false so that non-Gradle projects
-# never try to mount a .gradle directory that was never created.
-IS_GRADLE_PROJECT=false
-
 if [ "$WITH_INTERNET" != true ]; then
   warm_gradle_if_needed
 fi
 
-# Only mount .gradle when this is actually a Gradle project -- otherwise
-# GRADLE_CACHE_DIR was never created (warm_gradle_if_needed returned early
-# without an mkdir), and passing --volume with a source path that doesn't
-# exist makes `container run` fail outright rather than just skipping it.
+# Build the Gradle cache volume args if the container-dedicated cache exists.
+# This is only created when warm_gradle_if_needed detects a gradlew.
 GRADLE_VOLUME_ARGS=()
-if [ "$IS_GRADLE_PROJECT" = true ]; then
-  GRADLE_VOLUME_ARGS=(--volume "$GRADLE_CACHE_DIR:/home/pi/.gradle")
+if [ -d "$CONTAINER_GRADLE_CACHE_PROJECT" ]; then
+  GRADLE_VOLUME_ARGS=(--volume "$CONTAINER_GRADLE_CACHE_PROJECT:/home/pi/.gradle")
 fi
 
 if [ "$SHELL_MODE" = true ]; then
@@ -283,6 +285,7 @@ if [ "$SHELL_MODE" = true ]; then
     --workdir "/projects/$PROJECT_NAME" \
     --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
     --env "PROJECT_NAME=$PROJECT_NAME" \
+    --env "GRADLE_USER_HOME=/home/pi/.gradle" \
     "$IMAGE_TAG" \
     -c "export PS1='(AGENT-SANDBOX-${PROJECT_NAME}) \w \$ '; exec bash --norc"
 
@@ -301,5 +304,6 @@ container run \
   --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
   --workdir "/projects/$PROJECT_NAME" \
   --env "PROJECT_NAME=$PROJECT_NAME" \
+  --env "GRADLE_USER_HOME=/home/pi/.gradle" \
   "$IMAGE_TAG" \
   "$@"
