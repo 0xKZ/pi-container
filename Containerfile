@@ -55,6 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip \
     gcc g++ clang make cmake \
     gdb strace \
+    rustc cargo \
     wget \
     xxd bsdmainutils file \
     tree bat fd-find \
@@ -65,6 +66,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the name `fd` so it matches what the agent (and most
 # documentation/tutorials) expect.
 RUN ln -s "$(which fdfind)" /usr/local/bin/fd
+
+# Verify the toolchain installs from apt are actually on PATH.
+RUN rustc -V && cargo -V
 
 # Pinned deliberately -- avoid auto-upgrading to a version that might
 # change behavior we've already tuned our workflow around.
