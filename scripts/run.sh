@@ -153,9 +153,6 @@ ensure_egress_proxy() {
   container run -d --name egress-proxy \
     --network sandboxed \
     --network default \
-    --health-cmd "nc -z localhost 8080 || exit 1" \
-    --health-interval 1s \
-    --health-retries 5 \
     alpine/socat@sha256:7f9a06753033f2b7de18edc2353f2c15153413d95a039163c6db270fc7a6c3b0 \
     TCP-LISTEN:8080,fork,reuseaddr "TCP:${target_ip}:${target_port}"
 }
@@ -260,12 +257,13 @@ EOF
   fi
 }
 
-# Wait for the egress-proxy healthcheck to report healthy.
-# The healthcheck interval is 1s, so we poll every second up to 15s.
+# Wait for the egress-proxy socat listener to be ready.
+# Apple's container runtime does not support --health-cmd, so we test
+# connectivity directly by running socat inside the proxy container.
 wait_for_egress_proxy() {
   local retries=15
   for ((i = 1; i <= retries; i++)); do
-    if container inspect egress-proxy | jq -e '.[0].status.health.status == "healthy"' >/dev/null 2>&1; then
+    if container exec egress-proxy socat -t1 TCP:localhost:8080 /dev/null >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
