@@ -185,6 +185,13 @@ warm_gradle_if_needed() {
   fi
 
   mkdir -p "$CONTAINER_GRADLE_CACHE_PROJECT"
+
+  # Apply daemon idle timeout so the JVM doesn't sit around eating memory
+  # in the container after the warmup (or agent) finishes. 3600000 ms = 1 hour.
+  cat > "$CONTAINER_GRADLE_CACHE_PROJECT/gradle.properties" <<'EOF'
+org.gradle.daemon.idletimeout=3600000
+EOF
+
   echo "Gradle project detected. Warming cache at $CONTAINER_GRADLE_CACHE_PROJECT..." >&2
 
   # Resolve the warmup script to an absolute path.
