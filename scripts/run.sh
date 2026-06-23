@@ -147,16 +147,16 @@ ensure_egress_proxy() {
   # if no such container exists at all.
   container rm -f egress-proxy >/dev/null 2>&1 || true
 
-  # TODO: pin alpine/socat to a digest for reproducibility.
-  #   Run:  container inspect alpine/socat | jq -r '.[].status.imageDigest'
-  #   Then replace "alpine/socat" with "alpine/socat@sha256:<digest>"
+  # Pinned to a digest for reproducibility.
+  #   To find the digest of a new image:
+  #     container image inspect <image>:<tag> | jq -r '.[].configuration.descriptor.digest'
   container run -d --name egress-proxy \
     --network sandboxed \
     --network default \
     --health-cmd "nc -z localhost 8080 || exit 1" \
     --health-interval 1s \
     --health-retries 5 \
-    alpine/socat \
+    alpine/socat@sha256:7f9a06753033f2b7de18edc2353f2c15153413d95a039163c6db270fc7a6c3b0 \
     TCP-LISTEN:8080,fork,reuseaddr "TCP:${target_ip}:${target_port}"
 }
 
