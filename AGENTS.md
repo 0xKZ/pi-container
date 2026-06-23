@@ -51,3 +51,7 @@ The `container` CLI source and documentation are at:
 
 Clone that repo if you need to deep-dive into the container runtime and aren't
 operating on a Mac.
+
+## Security Notes
+
+This is a PUBLIC repository. Don't add secrets or API keys, be appropriately cautious.
