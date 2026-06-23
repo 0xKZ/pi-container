@@ -55,7 +55,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip \
     gcc g++ clang make cmake \
     gdb strace \
-    rustc cargo \
     wget \
     xxd bsdmainutils file \
     tree bat fd-find \
@@ -66,9 +65,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the name `fd` so it matches what the agent (and most
 # documentation/tutorials) expect.
 RUN ln -s "$(which fdfind)" /usr/local/bin/fd
-
-# Verify the toolchain installs from apt are actually on PATH.
-RUN rustc -V && cargo -V
 
 # Pinned deliberately -- avoid auto-upgrading to a version that might
 # change behavior we've already tuned our workflow around.
@@ -119,5 +115,15 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # at container *runtime*, runs as 'pi', not root.
 USER pi
 WORKDIR /projects
+
+# Install Rust via rustup (latest stable) — edition 2024 requires rustc 1.85+.
+# Ubuntu 22.04 apt ships rustc 1.75 which is too old.
+# Run this as the 'pi' user so the install lands in /home/pi/.cargo/bin,
+# which is fully accessible at runtime (avoids the /root permission trap).
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+    && . "$HOME/.cargo/env" \
+    && rustc -V && cargo -V
+
+ENV PATH="/home/pi/.cargo/bin:$PATH"
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
