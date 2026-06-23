@@ -76,8 +76,10 @@ GRADLE_WARMUP_SCRIPT="${GRADLE_WARMUP_SCRIPT:-$REPO_ROOT/scripts/gradle-warmup.s
 # if it's already running and reuses it.
 # --------------------------------------------------------------------------
 
-INFERENCE_SERVER_HOST_IP="192.168.64.1"
-INFERENCE_SERVER_HOST_PORT="8080"
+# Inference server host IP (Apple vmnet gateway). Override via env var if
+# your setup uses a different address.
+INFERENCE_SERVER_HOST_IP="${INFERENCE_SERVER_HOST_IP:-192.168.64.1}"
+INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
 
 # --shell drops into an interactive shell instead of launching pi, with the
 # same network + mounts the agent itself would get.
@@ -94,7 +96,13 @@ while [ $# -gt 0 ]; do
     *) REMAINING_ARGS+=("$1"); shift ;;
   esac
 done
-set -- "${REMAINING_ARGS[@]}"
+# Guard against empty array expansion under set -u.
+# In strict bash, "${REMAINING_ARGS[@]}" on an empty array throws
+# "unbound variable". The ${arr[@]+"${arr[@]}"} pattern expands to nothing
+# when the array is empty, and to the full array otherwise.
+if [ ${#REMAINING_ARGS[@]} -gt 0 ]; then
+  set -- "${REMAINING_ARGS[@]}"
+fi
 
 if [ ! -d "$PROJECT_DIR" ]; then
   echo "PROJECT_DIR='$PROJECT_DIR' does not exist." >&2
@@ -139,9 +147,15 @@ ensure_egress_proxy() {
   # if no such container exists at all.
   container rm -f egress-proxy >/dev/null 2>&1 || true
 
+  # TODO: pin alpine/socat to a digest for reproducibility.
+  #   Run:  container inspect alpine/socat | jq -r '.[].status.imageDigest'
+  #   Then replace "alpine/socat" with "alpine/socat@sha256:<digest>"
   container run -d --name egress-proxy \
     --network sandboxed \
     --network default \
+    --health-cmd "nc -z localhost 8080 || exit 1" \
+    --health-interval 1s \
+    --health-retries 5 \
     alpine/socat \
     TCP-LISTEN:8080,fork,reuseaddr "TCP:${target_ip}:${target_port}"
 }
@@ -246,9 +260,24 @@ EOF
   fi
 }
 
+# Wait for the egress-proxy healthcheck to report healthy.
+# The healthcheck interval is 1s, so we poll every second up to 15s.
+wait_for_egress_proxy() {
+  local retries=15
+  for ((i = 1; i <= retries; i++)); do
+    if container inspect egress-proxy | jq -e '.[0].status.health.status == "healthy"' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "WARNING: egress-proxy did not become healthy within ${retries}s." >&2
+  echo "The agent may experience initial connection failures." >&2
+}
+
 ensure_container_service
 ensure_sandboxed_network
 ensure_egress_proxy "$INFERENCE_SERVER_HOST_IP" "$INFERENCE_SERVER_HOST_PORT"
+wait_for_egress_proxy
 if [ "$WITH_INTERNET" = true ]; then
   EGRESS_PROXY_IP="$(get_proxy_ip egress-proxy default)"
 else
@@ -264,7 +293,17 @@ fi
 # it, so the --shell environment matches the real agent run as closely as
 # possible (same mounts, same rendered models.json, same network).
 RENDERED_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pi-config.XXXXXX")"
-render_config "$EGRESS_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET"
+trap 'rm -rf "$RENDERED_CONFIG_DIR"' EXIT
+
+# When --with-internet is set, point models.json at the inference server
+# directly (it's reachable on the default network) instead of routing
+# through the proxy unnecessarily.
+if [ "$WITH_INTERNET" = true ]; then
+  MODEL_PROXY_IP="$INFERENCE_SERVER_HOST_IP"
+else
+  MODEL_PROXY_IP="$EGRESS_PROXY_IP"
+fi
+render_config "$MODEL_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET"
 
 if [ "$WITH_INTERNET" != true ]; then
   warm_gradle_if_needed
@@ -287,7 +326,7 @@ if [ "$SHELL_MODE" = true ]; then
     --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
     --entrypoint sh \
     --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
-    "${GRADLE_VOLUME_ARGS[@]}" \
+    ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
     --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
     --workdir "/projects/$PROJECT_NAME" \
     --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
@@ -299,15 +338,19 @@ if [ "$SHELL_MODE" = true ]; then
   exit 0
 fi
 
+# Unique session ID so parallel runs on the same project don't collide.
+# The name "pi-<project>-<short-id>" is still readable in `container list`.
+SESSION_ID="$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+
 container run \
-  --name "pi-${PROJECT_NAME}" \
+  --name "pi-${PROJECT_NAME}-${SESSION_ID}" \
   --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
   --rm \
   --interactive \
   --tty \
   --memory "$MEMORY" \
   --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
-  "${GRADLE_VOLUME_ARGS[@]}" \
+  ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
   --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
   --workdir "/projects/$PROJECT_NAME" \
   --env "PROJECT_NAME=$PROJECT_NAME" \
