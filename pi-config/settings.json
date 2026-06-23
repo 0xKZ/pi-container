@@ -1,4 +1,9 @@
 {
   "theme": "gruvbox-dark-hard",
-  "sessionDir": ".pi/sessions"
+  "sessionDir": ".pi/sessions",
+  "retry": {
+    "provider": {
+      "timeoutMs": 3600000
+    }
+  }
 }
