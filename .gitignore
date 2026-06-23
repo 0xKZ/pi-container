@@ -7,6 +7,4 @@
 # macOS cruft
 .DS_Store
 
-# Local-only docs: not pushed to the repo
-CLAUDE.md
-en-pi-apple-container.md
+
