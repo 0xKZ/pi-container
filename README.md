@@ -104,6 +104,8 @@ When pi finishes its session, the container entrypoint drops you into a bash she
 
 If your project has a `gradlew`, `run.sh` pre-downloads Gradle dependencies on the `default` network before launching the sandboxed agent. The cache lives at `~/.pi-container-gradle/<project-name>` on the host. The warmup always uses `--cpus 4 --memory 4g` (JVM builds need more headroom than the agent run). Set `GRADLE_WARMUP_SCRIPT` to use a custom script.
 
+To prevent path pollution between the container and your Mac, Gradle metadata is fully isolated: both `GRADLE_USER_HOME` (dependency cache) and the project's own `.gradle/` directory (task artifacts, Spotless hashes) are mounted from container-dedicated directories. This means the host's Gradle never sees container-written paths like `/projects/...`, avoiding "target files must be within project dir" errors.
+
 ## Egress proxy lifecycle
 
 The `egress-proxy` container (a `socat` forwarder) is started once and persists across `run.sh` invocations. Parallel agent sessions share the same proxy. It is not torn down when a session ends — remove it manually with `container rm -f egress-proxy` if needed.

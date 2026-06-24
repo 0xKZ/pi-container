@@ -24,21 +24,34 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 
-# We do NOT bind-mount the project's .gradle/ into the container.
-# Gradle (especially Spotless) stores absolute paths in its cache.
-# Sharing the cache between container (/projects/...) and host
-# (/Users/...) causes "target files must be within project dir" errors
-# when the host reads container-written cache entries with stale paths.
+# Gradle isolation: we must NOT let the container write Gradle metadata
+# into the project tree that the host also sees. Gradle writes to TWO
+# locations that both store absolute paths:
 #
-# Instead, we use a container-dedicated Gradle cache on the host at
-# $CONTAINER_GRADLE_CACHE/<project-name>. This directory is:
-#   - Outside the project tree, so the host's Gradle never finds it
-#   - Bind-mounted as GRADLE_USER_HOME in the container, so Gradle inside
-#     the container uses it exclusively
-#   - Shared between the warmup and agent containers, so the warmup's
-#     dependency downloads are available to the sandboxed agent run
+#   1. GRADLE_USER_HOME (~/.gradle/) -- dependency cache, daemon state
+#   2. <project>/.gradle/             -- build output cleanup, task artifacts,
+#                                       Spotless file hashes, etc.
+#
+# Because the project directory is bind-mounted, location #2 is shared
+# between the container (/projects/...) and the host (/Users/...).
+# If the container writes paths like /projects/<project>/... into the
+# project's .gradle/, the host's Gradle reads them and fails with
+# "target files must be within project dir" errors.
+#
+# Solution: both locations use container-dedicated directories on the
+# host at $CONTAINER_GRADLE_CACHE/<project-name>. These directories are:
+#   - Outside the project tree, so the host's Gradle never finds them
+#   - Bind-mounted into the container, so Gradle inside uses them exclusively
+#   - Shared between the warmup and agent containers for the same project,
+#     so dependency downloads and build cache are reused
 CONTAINER_GRADLE_CACHE="${HOME}/.pi-container-gradle"
 CONTAINER_GRADLE_CACHE_PROJECT="${CONTAINER_GRADLE_CACHE}/${PROJECT_NAME}"
+
+# Container-dedicated replacement for the project's own .gradle/ directory.
+# Mounted over <project>/.gradle/ so the container never writes into the
+# host-visible project tree. Lives under the per-project cache so parallel
+# containers on the same project still share it.
+CONTAINER_PROJECT_GRADLE_DIR="${CONTAINER_GRADLE_CACHE_PROJECT}/project-gradle"
 
 # Path to the Gradle warmup script. Defaults to the bundled script at
 # scripts/gradle-warmup.sh (copied into the image at /usr/local/bin/gradle-warmup.sh).
@@ -190,18 +203,12 @@ render_config() {
 # Runs on the "default" network (real internet access) so the wrapper
 # distribution and dependencies can be downloaded. The sandboxed agent run
 # later reuses the same container-dedicated Gradle cache via bind mount.
+# Directory setup is done earlier (unconditionally) so this only handles
+# the actual warmup build run.
 warm_gradle_if_needed() {
   if [ ! -f "$PROJECT_DIR/gradlew" ]; then
     return 0
   fi
-
-  mkdir -p "$CONTAINER_GRADLE_CACHE_PROJECT"
-
-  # Apply daemon idle timeout so the JVM doesn't sit around eating memory
-  # in the container after the warmup (or agent) finishes. 3600000 ms = 1 hour.
-  cat > "$CONTAINER_GRADLE_CACHE_PROJECT/gradle.properties" <<'EOF'
-org.gradle.daemon.idletimeout=3600000
-EOF
 
   echo "Gradle project detected. Warming cache at $CONTAINER_GRADLE_CACHE_PROJECT..." >&2
 
@@ -224,9 +231,14 @@ EOF
   # 1GiB is tight for a JVM build and can cause silent stalls.
   #
   # We bind-mount the container-dedicated Gradle cache as GRADLE_USER_HOME
-  # so that Gradle uses it instead of the default ~/.gradle/ or the project's
-  # .gradle/. This cache lives outside the project tree, so the host's Gradle
-  # never reads it and there are no stale absolute-path conflicts.
+  # so that Gradle uses it instead of the default ~/.gradle/. This cache
+  # lives outside the project tree, so the host's Gradle never reads it.
+  #
+  # We also mount a container-dedicated directory over the project's own
+  # .gradle/ folder. Gradle writes task artifacts, build output cleanup
+  # metadata, and Spotless file hashes there -- all with absolute paths.
+  # Without this mount, the container would write /projects/... paths into
+  # the host-visible project tree, causing path conflicts on the host.
   #
   # We bind-mount the warmup script into the container at /tmp/gradle-warmup.sh
   # so that custom scripts (outside the image) are available at runtime.
@@ -241,6 +253,7 @@ EOF
     --cpus 4 \
     --memory 4g \
     --volume "$CONTAINER_GRADLE_CACHE_PROJECT:/home/pi/.gradle" \
+    --volume "$CONTAINER_PROJECT_GRADLE_DIR:/projects/$PROJECT_NAME/.gradle" \
     --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
     --volume "$warmup_script:/tmp/gradle-warmup.sh:ro" \
     --workdir "/projects/$PROJECT_NAME" \
@@ -303,15 +316,34 @@ else
 fi
 render_config "$MODEL_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET"
 
+# If the project has a Gradle wrapper, set up the container-dedicated Gradle
+# directories. This runs regardless of --with-internet so that the project's
+# .gradle/ is always isolated (preventing path pollution with the host).
+if [ -f "$PROJECT_DIR/gradlew" ]; then
+  mkdir -p "$CONTAINER_GRADLE_CACHE_PROJECT"
+  mkdir -p "$CONTAINER_PROJECT_GRADLE_DIR"
+
+  # Apply daemon idle timeout so the JVM doesn't sit around eating memory
+  # in the container after the warmup (or agent) finishes. 3600000 ms = 1 hour.
+  cat > "$CONTAINER_GRADLE_CACHE_PROJECT/gradle.properties" <<'EOF'
+org.gradle.daemon.idletimeout=3600000
+EOF
+fi
+
+# Pre-download Gradle dependencies on the default network (real internet).
+# Skipped when --with-internet since the agent container already has internet.
 if [ "$WITH_INTERNET" != true ]; then
   warm_gradle_if_needed
 fi
 
 # Build the Gradle cache volume args if the container-dedicated cache exists.
-# This is only created when warm_gradle_if_needed detects a gradlew.
+# This is only created when the project has a gradlew.
 GRADLE_VOLUME_ARGS=()
 if [ -d "$CONTAINER_GRADLE_CACHE_PROJECT" ]; then
-  GRADLE_VOLUME_ARGS=(--volume "$CONTAINER_GRADLE_CACHE_PROJECT:/home/pi/.gradle")
+  GRADLE_VOLUME_ARGS=(
+    --volume "$CONTAINER_GRADLE_CACHE_PROJECT:/home/pi/.gradle"
+    --volume "$CONTAINER_PROJECT_GRADLE_DIR:/projects/$PROJECT_NAME/.gradle"
+  )
 fi
 
 if [ "$SHELL_MODE" = true ]; then
