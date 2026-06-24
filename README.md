@@ -150,7 +150,7 @@ function pi-agent --description "Run pi-coding-agent sandboxed, using the curren
         end
     end
 
-    PROJECT_DIR="$PWD" "$PI_SANDBOX_RUN_SCRIPT" $args
+    PROJECT_DIR="$PWD" "$PI_SANDBOX_RUN_SCRIPT" "$args"
 end
 ```
 
