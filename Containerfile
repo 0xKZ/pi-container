@@ -120,9 +120,9 @@ WORKDIR /projects
 # Ubuntu 22.04 apt ships rustc 1.75 which is too old.
 # Run this as the 'pi' user so the install lands in /home/pi/.cargo/bin,
 # which is fully accessible at runtime (avoids the /root permission trap).
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy \
     && . "$HOME/.cargo/env" \
-    && rustc -V && cargo -V
+    && rustc -V && cargo -V && cargo clippy --version
 
 ENV PATH="/home/pi/.cargo/bin:$PATH"
 
