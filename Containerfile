@@ -68,7 +68,7 @@ RUN ln -s "$(which fdfind)" /usr/local/bin/fd
 
 # Pinned deliberately -- avoid auto-upgrading to a version that might
 # change behavior we've already tuned our workflow around.
-ARG PI_VERSION=0.79.6
+ARG PI_VERSION=0.80.2
 
 # "--ignore-scripts" is suggested by the pi documentation itself.
 #
