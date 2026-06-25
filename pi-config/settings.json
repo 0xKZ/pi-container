@@ -1,6 +1,7 @@
 {
   "theme": "gruvbox-dark-hard",
   "sessionDir": ".pi/sessions",
+  "httpIdleTimeoutMs": 3600000,
   "retry": {
     "provider": {
       "timeoutMs": 3600000
