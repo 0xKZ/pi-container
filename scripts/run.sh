@@ -287,17 +287,21 @@ wait_for_egress_proxy() {
 
 ensure_container_service
 ensure_sandboxed_network
-ensure_egress_proxy "$INFERENCE_SERVER_HOST_IP" "$INFERENCE_SERVER_HOST_PORT"
-wait_for_egress_proxy
-if [ "$WITH_INTERNET" = true ]; then
-  EGRESS_PROXY_IP="$(get_proxy_ip egress-proxy default)"
-else
-  EGRESS_PROXY_IP="$(get_proxy_ip egress-proxy sandboxed)"
-fi
 
-if [ -z "$EGRESS_PROXY_IP" ]; then
-  echo "Failed to determine egress-proxy sandboxed-network IP." >&2
-  exit 1
+# When --with-internet is set, the agent runs on the default network with
+# full internet access. No proxy is needed — connect directly to the
+# inference server. This also saves the memory cost of the socat container.
+if [ "$WITH_INTERNET" = true ]; then
+  EGRESS_PROXY_IP="$INFERENCE_SERVER_HOST_IP"
+else
+  ensure_egress_proxy "$INFERENCE_SERVER_HOST_IP" "$INFERENCE_SERVER_HOST_PORT"
+  wait_for_egress_proxy
+  EGRESS_PROXY_IP="$(get_proxy_ip egress-proxy sandboxed)"
+
+  if [ -z "$EGRESS_PROXY_IP" ]; then
+    echo "Failed to determine egress-proxy sandboxed-network IP." >&2
+    exit 1
+  fi
 fi
 
 # Render the agent config now -- both branches below (shell and normal) use
