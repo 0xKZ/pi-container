@@ -5,9 +5,11 @@
 # Expects two mounts:
 #   - pi-config/    -> /home/pi/.pi/agent  (provider config, AGENTS.md, extensions)
 #   - $PROJECT_DIR  -> /projects/<name>    (the project to work on, name = basename of PROJECT_DIR)
+# Additional folders can be mounted with --add-folder <path> -> /extra/<name>
 #
 # Example:
 #   PROJECT_DIR=~/projects/small-test-repo ./scripts/run.sh --model llama-local/Qwen3.6-27B
+#   PROJECT_DIR=~/projects/my-project ./scripts/run.sh --add-folder ../other-repo --model llama-local/Qwen3.6-27B
 #
 # (where '--model' is an argument forwarded to pi, and an entry in the models.json)
 #
@@ -98,14 +100,24 @@ INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
 # same network + mounts the agent itself would get.
 # --with-internet uses the "default" network (full internet access) instead
 # of the "sandboxed" network, and skips the Gradle warmup step.
+# --add-folder <path> mounts an additional folder (relative or absolute) at
+# /extra/<folder-name> inside the container, so the agent can read files from
+# other projects or locations. Can be repeated for multiple folders.
 # These flags can appear in any position among the arguments.
 SHELL_MODE=false
 WITH_INTERNET=false
+ADD_FOLDERS=()
 REMAINING_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --shell) SHELL_MODE=true; shift ;;
     --with-internet) WITH_INTERNET=true; shift ;;
+    --add-folder)
+      if [ $# -lt 2 ]; then
+        echo "--add-folder requires a path argument." >&2
+        exit 1
+      fi
+      ADD_FOLDERS+=("$2"); shift 2 ;;
     *) REMAINING_ARGS+=("$1"); shift ;;
   esac
 done
@@ -116,6 +128,24 @@ done
 if [ ${#REMAINING_ARGS[@]} -gt 0 ]; then
   set -- "${REMAINING_ARGS[@]}"
 fi
+
+# Resolve --add-folder paths to absolute paths and validate they exist.
+# Each folder is mounted at /extra/<basename> inside the container.
+EXTRA_FOLDER_MOUNTS=()  # pairs of "host_path:/extra/folder_name"
+for folder in "${ADD_FOLDERS[@]+"${ADD_FOLDERS[@]}"}"; do
+  # Resolve to absolute path (creates no files, just canonicalises)
+  local_abs=""
+  if [[ "$folder" == /* ]]; then
+    local_abs="$folder"
+  else
+    local_abs="$(cd "$(dirname "$folder")" && pwd)/$(basename "$folder")"
+  fi
+  if [ ! -d "$local_abs" ]; then
+    echo "--add-folder path '$folder' resolved to '$local_abs' which is not a directory." >&2
+    exit 1
+  fi
+  EXTRA_FOLDER_MOUNTS+=("$local_abs:/extra/$(basename "$local_abs")")
+done
 
 if [ ! -d "$PROJECT_DIR" ]; then
   echo "PROJECT_DIR='$PROJECT_DIR' does not exist." >&2
@@ -185,8 +215,11 @@ get_proxy_ip() {
 #   (a) parallel sessions never stomp on each other's rendered config, and
 #   (b) the checked-in template never gets overwritten with a stale IP.
 # If with_internet is "false", appends a no-internet notice to APPEND_SYSTEM.md.
+# If extra mounts are provided (args 5+), appends a path mapping table so the
+# agent can resolve host paths the user references to their /extra/... locations.
 render_config() {
   local proxy_ip="$1" proxy_port="$2" out_dir="$3" with_internet="$4"
+  shift 4
   mkdir -p "$out_dir"
   cp -R "$REPO_ROOT/pi-config/." "$out_dir/"
   sed -e "s/__EGRESS_PROXY_IP__/${proxy_ip}/g" \
@@ -196,6 +229,23 @@ render_config() {
     printf '\n> **No internet access is available.** Do not attempt to make
 > network requests, fetch URLs, or install packages from remote registries.\n' \
       >> "$out_dir/APPEND_SYSTEM.md"
+  fi
+  # Append path mapping for --add-folder mounts so the agent knows where
+  # to find files when the user references a host path that doesn't exist
+  # inside the container.
+  if [ $# -gt 0 ]; then
+    {
+      printf '\n## Extra Folder Mounts\n\n'
+      printf 'The following folders from your machine are mounted inside this container\n'
+      printf 'under `/extra/`. If a path you reference does not exist, check this mapping:\n\n'
+      printf '| Your path | Container path |\n'
+      printf '|---|---|\n'
+      for mount in "$@"; do
+        local host_path="${mount%%:*}"
+        local container_path="${mount#*:}"
+        printf '| `%s` | `%s` |\n' "$host_path" "$container_path"
+      done
+    } >> "$out_dir/APPEND_SYSTEM.md"
   fi
 }
 
@@ -318,7 +368,8 @@ if [ "$WITH_INTERNET" = true ]; then
 else
   MODEL_PROXY_IP="$EGRESS_PROXY_IP"
 fi
-render_config "$MODEL_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET"
+render_config "$MODEL_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET" \
+  "${EXTRA_FOLDER_MOUNTS[@]+"${EXTRA_FOLDER_MOUNTS[@]}"}"
 
 # If the project has a Gradle wrapper, set up the container-dedicated Gradle
 # directories. This runs regardless of --with-internet so that the project's
@@ -350,6 +401,12 @@ if [ -d "$CONTAINER_GRADLE_CACHE_PROJECT" ]; then
   )
 fi
 
+# Build volume args for --add-folder mounts.
+EXTRA_VOLUME_ARGS=()
+for mount in "${EXTRA_FOLDER_MOUNTS[@]+"${EXTRA_FOLDER_MOUNTS[@]}"}"; do
+  EXTRA_VOLUME_ARGS+=(--volume "$mount")
+done
+
 if [ "$SHELL_MODE" = true ]; then
   local_network_label="sandboxed"
   if [ "$WITH_INTERNET" = true ]; then
@@ -361,6 +418,7 @@ if [ "$SHELL_MODE" = true ]; then
     --entrypoint sh \
     --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
     ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
+    ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
     --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
     --workdir "/projects/$PROJECT_NAME" \
     --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
@@ -385,6 +443,7 @@ container run \
   --memory "$MEMORY" \
   --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
   ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
+  ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
   --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
   --workdir "/projects/$PROJECT_NAME" \
   --env "PROJECT_NAME=$PROJECT_NAME" \
