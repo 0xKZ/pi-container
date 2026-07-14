@@ -42,6 +42,9 @@ PROJECT_DIR=~/my-project ./scripts/run.sh --model llama-local/Qwen3.6-27B
 
 # Run with full internet access
 ./scripts/run.sh --with-internet
+
+# Run with display access (for graphics/game testing)
+./scripts/run.sh --with-display --model llama-local/Qwen3.6-27B
 ```
 
 ## Apple container docs

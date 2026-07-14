@@ -8,6 +8,21 @@
 # hit an error and quit) should still land you in bash, not kill the
 # container.
 
+# --- Display setup ---
+# If DISPLAY_MODE=xvfb, start a virtual framebuffer (Xvfb) so that graphics
+# operations (game rendering, screenshot tests, etc.) have a display to use.
+# This runs headlessly — no actual window appears on the host Mac.
+# If DISPLAY_MODE=x11, the host's XQuartz socket is already mounted and
+# DISPLAY is set; nothing extra to do here.
+if [ "${DISPLAY_MODE}" = "xvfb" ]; then
+    Xvfb "${DISPLAY:-:99}" -screen 0 1920x1080x24 &
+    XVFB_PID=$!
+    # Wait briefly for Xvfb to be ready
+    for i in 1 2 3 4 5; do
+        if xdpyinfo >/dev/null 2>&1; then break; fi
+        sleep 0.2
+    done
+fi
 
 # Navigate to the project-specific directory so pi's footer and terminal
 # title show the project name instead of a generic "/workspace".

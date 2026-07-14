@@ -58,6 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     xxd bsdmainutils file \
     tree bat fd-find \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # Debian/Ubuntu ship the `fd` tool under the binary name `fdfind` (to avoid

@@ -10,6 +10,7 @@
 # Example:
 #   PROJECT_DIR=~/projects/small-test-repo ./scripts/run.sh --model llama-local/Qwen3.6-27B
 #   PROJECT_DIR=~/projects/my-project ./scripts/run.sh --add-folder ../other-repo --model llama-local/Qwen3.6-27B
+#   PROJECT_DIR=~/projects/game ./scripts/run.sh --with-display --model llama-local/Qwen3.6-27B
 #
 # (where '--model' is an argument forwarded to pi, and an entry in the models.json)
 #
@@ -100,18 +101,24 @@ INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
 # same network + mounts the agent itself would get.
 # --with-internet uses the "default" network (full internet access) instead
 # of the "sandboxed" network, and skips the Gradle warmup step.
+# --with-display enables access to a display for graphics operations. If
+# XQuartz is installed on the host (X11 socket at /tmp/.X11-unix exists),
+# the host display is mounted into the container. Otherwise, a virtual
+# framebuffer (Xvfb) is started inside the container for headless rendering.
 # --add-folder <path> mounts an additional folder (relative or absolute) at
 # /extra/<folder-name> inside the container, so the agent can read files from
 # other projects or locations. Can be repeated for multiple folders.
 # These flags can appear in any position among the arguments.
 SHELL_MODE=false
 WITH_INTERNET=false
+WITH_DISPLAY=false
 ADD_FOLDERS=()
 REMAINING_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --shell) SHELL_MODE=true; shift ;;
     --with-internet) WITH_INTERNET=true; shift ;;
+    --with-display) WITH_DISPLAY=true; shift ;;
     --add-folder)
       if [ $# -lt 2 ]; then
         echo "--add-folder requires a path argument." >&2
@@ -407,6 +414,30 @@ for mount in "${EXTRA_FOLDER_MOUNTS[@]+"${EXTRA_FOLDER_MOUNTS[@]}"}"; do
   EXTRA_VOLUME_ARGS+=(--volume "$mount")
 done
 
+# Display access: --with-display enables graphics operations inside the container.
+# Two modes are supported:
+#   1. X11 (host XQuartz): If /tmp/.X11-unix exists on the host, mount it into
+#      the container so apps render on the Mac's actual display.
+#   2. Xvfb (virtual framebuffer): If no host X11 is available, start Xvfb inside
+#      the container for headless rendering. Games/test code can create windows
+#      and render to the virtual display.
+DISPLAY_MODE="none"   # "none" | "x11" | "xvfb"
+DISPLAY_VOLUME_ARGS=()
+DISPLAY_ENV_ARGS=()
+if [ "$WITH_DISPLAY" = true ]; then
+  if [ -d "/tmp/.X11-unix" ]; then
+    DISPLAY_MODE="x11"
+    DISPLAY_VOLUME_ARGS=(--volume "/tmp/.X11-unix:/tmp/.X11-unix:ro")
+    DISPLAY_ENV_ARGS=(--env "DISPLAY=:0" --env "DISPLAY_MODE=x11")
+    echo "Display mode: X11 (host XQuartz at /tmp/.X11-unix)" >&2
+  else
+    DISPLAY_MODE="xvfb"
+    DISPLAY_ENV_ARGS=(--env "DISPLAY=:99" --env "DISPLAY_MODE=xvfb")
+    echo "Display mode: Xvfb (virtual framebuffer at :99)." >&2
+    echo "  (Install XQuartz on the Mac for real display access.)" >&2
+  fi
+fi
+
 if [ "$SHELL_MODE" = true ]; then
   local_network_label="sandboxed"
   if [ "$WITH_INTERNET" = true ]; then
@@ -419,13 +450,25 @@ if [ "$SHELL_MODE" = true ]; then
     --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
     ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
     ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
+    ${DISPLAY_VOLUME_ARGS[@]+"${DISPLAY_VOLUME_ARGS[@]}"} \
     --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
     --workdir "/projects/$PROJECT_NAME" \
     --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
     --env "PROJECT_NAME=$PROJECT_NAME" \
     --env "GRADLE_USER_HOME=/home/pi/.gradle" \
+    ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
     "$IMAGE_TAG" \
-    -c "export PS1='(AGENT-SANDBOX-${PROJECT_NAME}) \w \$ '; exec bash --norc"
+    -c '
+      if [ "${DISPLAY_MODE}" = "xvfb" ]; then
+        Xvfb "${DISPLAY:-:99}" -screen 0 1920x1080x24 &
+        for i in 1 2 3 4 5; do
+          if xdpyinfo >/dev/null 2>&1; then break; fi
+          sleep 0.2
+        done
+      fi
+      export PS1="(AGENT-SANDBOX-${PROJECT_NAME}) \w \$ "
+      exec bash --norc
+    '
 
   exit 0
 fi
@@ -444,9 +487,11 @@ container run \
   --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
   ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
   ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
+  ${DISPLAY_VOLUME_ARGS[@]+"${DISPLAY_VOLUME_ARGS[@]}"} \
   --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
   --workdir "/projects/$PROJECT_NAME" \
   --env "PROJECT_NAME=$PROJECT_NAME" \
   --env "GRADLE_USER_HOME=/home/pi/.gradle" \
+  ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
   "$IMAGE_TAG" \
   "$@"
