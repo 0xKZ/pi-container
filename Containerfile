@@ -98,6 +98,11 @@ RUN groupadd --gid ${PI_GID} pi \
 # This one avoids telemetry and update checks on pi startup.
 ENV PI_OFFLINE=1
 
+# Non-interactive git editor so rebase/commit don't hang waiting for vim.
+# `true` is a no-op that exits 0 — git uses it to auto-accept the default
+# message without opening an editor.
+ENV GIT_EDITOR=true
+
 # entrypoint.sh runs `pi`, and once pi exits (quit, error, whatever) drops
 # you into an interactive bash shell INSIDE THE SAME STILL-RUNNING VM,
 # instead of letting the container exit immediately. The VM only actually
