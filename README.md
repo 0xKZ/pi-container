@@ -116,45 +116,32 @@ The file `pi-config/APPEND_SYSTEM.md` is appended to pi's system prompt at runti
 
 ## Fish shell convenience wrapper
 
-Optional fish-only wrapper that lets you run `pi-agent` from any project directory. Set two global variables and install the function below:
+Optional fish-only wrapper that lets you run `pi-agent` from any project directory.
+
+First, set two global variables (adjust the paths as needed):
 
 ```fish
 set -U PI_SANDBOX_RUN_SCRIPT ~/path/to/pi-container/scripts/run.sh
 set -U PI_SANDBOX_DEFAULT_MODEL llama-local/Qwen3.6-27B
 ```
 
-Then create `~/.config/fish/functions/pi-agent.fish`:
+Then copy the wrapper function into your fish functions directory:
 
 ```fish
-function pi-agent --description "Run pi-coding-agent sandboxed, using the current directory as the project"
-    if not set -q PI_SANDBOX_RUN_SCRIPT
-        echo "PI_SANDBOX_RUN_SCRIPT is not set. Run: set -U PI_SANDBOX_RUN_SCRIPT /path/to/run.sh" >&2
-        return 1
-    end
-
-    if not test -x "$PI_SANDBOX_RUN_SCRIPT"
-        echo "PI_SANDBOX_RUN_SCRIPT points at '$PI_SANDBOX_RUN_SCRIPT', which doesn't exist or isn't executable." >&2
-        return 1
-    end
-
-    set -l args $argv
-
-    # Only inject the default model if the caller didn't already pass
-    # --model themselves -- lets you override per-call without editing
-    # any config, e.g. `pi-agent --model some-other-model`.
-    # Append at the end (not prepend) so that run.sh's arg parser sees
-    # user-provided flags like --with-internet before hitting --model.
-    if set -q PI_SANDBOX_DEFAULT_MODEL
-        if not contains -- --model $args
-            set args $args --model $PI_SANDBOX_DEFAULT_MODEL
-        end
-    end
-
-    PROJECT_DIR="$PWD" "$PI_SANDBOX_RUN_SCRIPT" $args
-end
+cp scripts/fish/pi-agent.fish ~/.config/fish/functions/pi-agent.fish
 ```
 
-Then simply run `pi-agent` in any project directory. Use `pi-agent --shell` for a debugging shell, or `pi-agent --with-internet` for full internet access.
+After that, you can run `pi-agent` from any project directory:
+
+```fish
+cd ~/my-project
+pi-agent                    # runs with the default model
+pi-agent --shell            # drops into a debugging shell
+pi-agent --with-internet    # runs with full internet access
+pi-agent --model other-model  # overrides the default model for this call
+```
+
+The script lives in `scripts/fish/` so other wrappers (e.g. for different agents) can coexist without cluttering the README.
 
 # Credits
 
