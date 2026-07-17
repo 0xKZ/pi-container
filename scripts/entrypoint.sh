@@ -7,6 +7,12 @@
 # We don't `set -e` here on purpose -- a non-zero exit from pi (e.g. user
 # hit an error and quit) should still land you in bash, not kill the
 # container.
+#
+# Detached mode: if DETACH_MODE is set, the container was launched in
+# headless mode. Pi runs and the container exits when it finishes
+# (no debug shell).
+# Prompt file: if PROMPT_FILE is set, pi is started with that prompt
+# (works in both detached and interactive modes).
 
 # --- Display setup ---
 # If DISPLAY_MODE=xvfb, start a virtual framebuffer (Xvfb) so that graphics
@@ -31,9 +37,18 @@ if [ -n "${PROJECT_NAME}" ] && [ -d "/projects/${PROJECT_NAME}" ]; then
     cd "/projects/${PROJECT_NAME}"
 fi
 
-# pi reads ~/.pi/agent/* at runtime; the directory is mounted via a volume.
-pi "$@"
+# Run pi, optionally with a prompt file.
+if [ -n "${PROMPT_FILE}" ] && [ -f "${PROMPT_FILE}" ]; then
+    pi "$@" -p "@${PROMPT_FILE}"
+else
+    pi "$@"
+fi
 PI_EXIT_CODE=$?
+
+# Detached mode: exit when pi finishes (no debug shell).
+if [ "${DETACH_MODE}" = true ]; then
+    exit $PI_EXIT_CODE
+fi
 
 echo ""
 echo "pi exited (code ${PI_EXIT_CODE}). Dropping into a shell -- exit this to stop the container."

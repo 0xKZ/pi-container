@@ -109,10 +109,17 @@ INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
 # --add-folder <path> mounts an additional folder (relative or absolute) at
 # /extra/<folder-name> inside the container, so the agent can read files from
 # other projects or locations. Can be repeated for multiple folders.
+# --detach launches the container in detached (headless) mode and returns
+# immediately. The container name is printed to stdout.
+# --prompt-file <path> path to a file containing the prompt for pi.
+# Required with --detach; can also be used in interactive mode. The file is
+# bind-mounted into the container and passed to pi via -p.
 # These flags can appear in any position among the arguments.
 SHELL_MODE=false
 WITH_INTERNET=false
 NO_DISPLAY=false
+DETACH_MODE=false
+PROMPT_FILE=""
 ADD_FOLDERS=()
 REMAINING_ARGS=()
 while [ $# -gt 0 ]; do
@@ -120,6 +127,13 @@ while [ $# -gt 0 ]; do
     --shell) SHELL_MODE=true; shift ;;
     --with-internet) WITH_INTERNET=true; shift ;;
     --no-display) NO_DISPLAY=true; shift ;;
+    --detach) DETACH_MODE=true; shift ;;
+    --prompt-file)
+      if [ $# -lt 2 ]; then
+        echo "--prompt-file requires a path argument." >&2
+        exit 1
+      fi
+      PROMPT_FILE="$2"; shift 2 ;;
     --add-folder)
       if [ $# -lt 2 ]; then
         echo "--add-folder requires a path argument." >&2
@@ -129,6 +143,32 @@ while [ $# -gt 0 ]; do
     *) REMAINING_ARGS+=("$1"); shift ;;
   esac
 done
+# Validate --detach mode requirements.
+if [ "$DETACH_MODE" = true ] && [ -z "$PROMPT_FILE" ]; then
+  echo "--detach requires --prompt-file." >&2
+  exit 1
+fi
+
+# --shell and --detach are mutually exclusive.
+if [ "$SHELL_MODE" = true ] && [ "$DETACH_MODE" = true ]; then
+  echo "--shell and --detach are mutually exclusive." >&2
+  exit 1
+fi
+
+# Resolve --prompt-file to an absolute path and validate it exists.
+RESOLVED_PROMPT_FILE=""
+if [ -n "$PROMPT_FILE" ]; then
+  if [[ "$PROMPT_FILE" == /* ]]; then
+    RESOLVED_PROMPT_FILE="$PROMPT_FILE"
+  else
+    RESOLVED_PROMPT_FILE="$(cd "$(dirname "$PROMPT_FILE")" && pwd)/$(basename "$PROMPT_FILE")"
+  fi
+  if [ ! -f "$RESOLVED_PROMPT_FILE" ]; then
+    echo "--prompt-file path '$PROMPT_FILE' resolved to '$RESOLVED_PROMPT_FILE' which is not a file." >&2
+    exit 1
+  fi
+fi
+
 # Guard against empty array expansion under set -u.
 # In strict bash, "${REMAINING_ARGS[@]}" on an empty array throws
 # "unbound variable". The ${arr[@]+"${arr[@]}"} pattern expands to nothing
@@ -366,7 +406,13 @@ fi
 # it, so the --shell environment matches the real agent run as closely as
 # possible (same mounts, same rendered models.json, same network).
 RENDERED_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pi-config.XXXXXX")"
-trap 'rm -rf "$RENDERED_CONFIG_DIR"' EXIT
+
+# In detach mode, do NOT clean up RENDERED_CONFIG_DIR on exit because the
+# container has it bind-mounted and needs it for its entire lifetime.
+# Stale /tmp directories are left to OS cleanup (tmpreaper, reboot).
+if [ "$DETACH_MODE" != true ]; then
+  trap 'rm -rf "$RENDERED_CONFIG_DIR"' EXIT
+fi
 
 # When --with-internet is set, point models.json at the inference server
 # directly (it's reachable on the default network) instead of routing
@@ -477,22 +523,56 @@ fi
 # Unique session ID so parallel runs on the same project don't collide.
 # The name "pi-<project>-<short-id>" is still readable in `container list`.
 SESSION_ID="$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+CONTAINER_NAME="pi-${PROJECT_NAME}-${SESSION_ID}"
 
-container run \
-  --name "pi-${PROJECT_NAME}-${SESSION_ID}" \
-  --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
-  --rm \
-  --interactive \
-  --tty \
-  --memory "$MEMORY" \
-  --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
-  ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
-  ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
-  ${DISPLAY_VOLUME_ARGS[@]+"${DISPLAY_VOLUME_ARGS[@]}"} \
-  --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
-  --workdir "/projects/$PROJECT_NAME" \
-  --env "PROJECT_NAME=$PROJECT_NAME" \
-  --env "GRADLE_USER_HOME=/home/pi/.gradle" \
-  ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
-  "$IMAGE_TAG" \
-  "$@"
+if [ "$DETACH_MODE" = true ]; then
+  # Detached (headless) mode: launch container and return immediately.
+  # -d flag for detached, no --rm/--interactive/--tty so the container
+  # persists and the plugin can track it via `container list`.
+  container run \
+    --name "$CONTAINER_NAME" \
+    -d \
+    --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
+    --memory "$MEMORY" \
+    --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
+    ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
+    ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
+    ${DISPLAY_VOLUME_ARGS[@]+"${DISPLAY_VOLUME_ARGS[@]}"} \
+    --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
+    --volume "$RESOLVED_PROMPT_FILE:/tmp/pi-prompt.txt:ro" \
+    --workdir "/projects/$PROJECT_NAME" \
+    --env "PROJECT_NAME=$PROJECT_NAME" \
+    --env "PROMPT_FILE=/tmp/pi-prompt.txt" \
+    --env "DETACH_MODE=true" \
+    --env "GRADLE_USER_HOME=/home/pi/.gradle" \
+    ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
+    "$IMAGE_TAG" \
+    "$@" 1>&2
+
+  # Print the container name to stdout so the caller
+  # (e.g., an orchestration plugin) can capture it as the session ID.
+  # container run -d writes the container ID to stdout, so we redirect
+  # its output to stderr above — this keeps stdout clean for the name.
+  echo "$CONTAINER_NAME"
+else
+  container run \
+    --name "$CONTAINER_NAME" \
+    --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
+    --rm \
+    --interactive \
+    --tty \
+    --memory "$MEMORY" \
+    --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
+    ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
+    ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
+    ${DISPLAY_VOLUME_ARGS[@]+"${DISPLAY_VOLUME_ARGS[@]}"} \
+    --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
+    ${PROMPT_FILE:+--volume "$RESOLVED_PROMPT_FILE:/tmp/pi-prompt.txt:ro"} \
+    --workdir "/projects/$PROJECT_NAME" \
+    --env "PROJECT_NAME=$PROJECT_NAME" \
+    ${PROMPT_FILE:+--env "PROMPT_FILE=/tmp/pi-prompt.txt"} \
+    --env "GRADLE_USER_HOME=/home/pi/.gradle" \
+    ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
+    "$IMAGE_TAG" \
+    "$@"
+fi
