@@ -72,7 +72,7 @@ Each project gets its own isolated session store. Add `.pi/` to your project's `
 
 ## pi-config
 
-The `pi-config/` directory is mounted into the container as the agent's config. Subdirectories like `extensions/` and `themes/` are passed through as-is. For details on all supported config files, see the [pi documentation](https://github.com/nicepkg/pi).
+The `pi-config/` directory is mounted into the container as the agent's config. Subdirectories like `extensions/` and `themes/` are passed through as-is. For details on all supported config files, see the [pi documentation](https://pi.dev/).
 
 ## Post-exit shell
 
