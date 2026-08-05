@@ -36,6 +36,32 @@ Use `--with-internet` to launch the container on the `default` network with full
 PROJECT_DIR=~/my-project ./scripts/run.sh --with-internet --model llama-local/Qwen3.6-27B
 ```
 
+### Running with OpenRouter
+
+Use `--openrouter --with-internet` to use pi's built-in OpenRouter provider instead of your local inference server. This requires the `OPENROUTER_API_KEY` environment variable. When using this mode, `models.json` is not rendered — pi uses its full built-in OpenRouter model list, and the local `llama-local` provider is not visible.
+
+```
+PROJECT_DIR=~/my-project ./scripts/run.sh --openrouter --with-internet --model openrouter/deepseek/deepseek-v4-flash-0731
+```
+
+> **Note:** Set `OPENROUTER_API_KEY` before running. To avoid leaking your key in shell history, use one of:
+>
+> ```
+> # Option A: export in your current shell (not written to history if added to ~/.profile)
+> export OPENROUTER_API_KEY="sk-or-v1-YOUR_KEY_HERE"
+> 
+> # Option B: use a .env file (recommended)
+> echo 'OPENROUTER_API_KEY=sk-or-v1-YOUR_KEY_HERE' > ~/.pi-container-env
+> chmod 600 ~/.pi-container-env
+> set -a; source ~/.pi-container-env; set +a
+> # ⚠️ Avoid placing this file in directories synced by iCloud, Dropbox, etc.
+> ```
+> Then run `./scripts/run.sh` as shown above with the key already exported.
+
+`--openrouter` requires `--with-internet` (OpenRouter is a cloud API) and will error if either `--with-internet` or `OPENROUTER_API_KEY` is missing. It also requires `--model` to specify which OpenRouter model to use (e.g. `--model openrouter/deepseek/deepseek-v4-flash-0731`). If you use the [fish convenience wrapper](#fish-shell-convenience-wrapper) with `PI_SANDBOX_DEFAULT_MODEL_OPENROUTER` set, the model is injected automatically and you don't need to pass `--model` manually.
+
+`--openrouter` can be combined with `--shell` to drop into a debugging shell with internet access and the `OPENROUTER_API_KEY` environment variable available — useful for testing OpenRouter connectivity or debugging auth issues.
+
 ### Notes on llama-server
 
 When hosting with llama-server, use `--host 0.0.0.0` — this exposes the server to your LAN but is required for the container to reach it.
@@ -89,6 +115,15 @@ When pi finishes its session, the container entrypoint drops you into a bash she
 | `INFERENCE_SERVER_HOST_PORT` | `8080` | Port of the inference server |
 | `GRADLE_WARMUP_SCRIPT` | `scripts/gradle-warmup.sh` | Custom warmup script path |
 | `EGRESS_PROXY_IP` | *(auto-detected)* | The proxy's IP on the active network (sandboxed or default, depending on `--with-internet`); exposed as an env var inside the container |
+| `OPENROUTER_API_KEY` | *(required with `--openrouter`)* | OpenRouter API key. Passed into the container only when `--openrouter` is used. |
+
+> **Fish wrapper variables** (used by the `pi-agent` convenience wrapper, not `run.sh` itself):
+>
+>| Variable | Default | Description |
+>|---|---|---|
+>| `PI_SANDBOX_RUN_SCRIPT` | *(required)* | Path to `scripts/run.sh` |
+>| `PI_SANDBOX_DEFAULT_MODEL` | *(none)* | Default model for local/sandboxed runs |
+>| `PI_SANDBOX_DEFAULT_MODEL_OPENROUTER` | *(none)* | Default model when using `--openrouter` |
 
 # Troubleshooting
 
@@ -118,12 +153,16 @@ The file `pi-config/APPEND_SYSTEM.md` is appended to pi's system prompt at runti
 
 Optional fish-only wrapper that lets you run `pi-agent` from any project directory.
 
-First, set two global variables (adjust the paths as needed):
+First, set global variables (adjust the paths and models as needed):
 
 ```fish
 set -U PI_SANDBOX_RUN_SCRIPT ~/path/to/pi-container/scripts/run.sh
 set -U PI_SANDBOX_DEFAULT_MODEL llama-local/Qwen3.6-27B
+set -U PI_SANDBOX_DEFAULT_MODEL_OPENROUTER openrouter/deepseek/deepseek-v4-flash-0731
 ```
+
+- `PI_SANDBOX_DEFAULT_MODEL` — default model for local/sandboxed runs
+- `PI_SANDBOX_DEFAULT_MODEL_OPENROUTER` — default model when using `--openrouter`
 
 Then copy the wrapper function into your fish functions directory:
 
@@ -135,10 +174,11 @@ After that, you can run `pi-agent` from any project directory:
 
 ```fish
 cd ~/my-project
-pi-agent                    # runs with the default model
-pi-agent --shell            # drops into a debugging shell
-pi-agent --with-internet    # runs with full internet access
-pi-agent --model other-model  # overrides the default model for this call
+pi-agent                          # runs with the default local model
+pi-agent --openrouter             # runs with the default OpenRouter model
+pi-agent --shell                  # drops into a debugging shell
+pi-agent --with-internet          # runs with full internet access
+pi-agent --model other-model       # overrides the default model for this call
 ```
 
 The script lives in `scripts/fish/` so other wrappers (e.g. for different agents) can coexist without cluttering the README.

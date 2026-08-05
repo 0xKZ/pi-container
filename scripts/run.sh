@@ -11,8 +11,10 @@
 #   PROJECT_DIR=~/projects/small-test-repo ./scripts/run.sh --model llama-local/Qwen3.6-27B
 #   PROJECT_DIR=~/projects/my-project ./scripts/run.sh --add-folder ../other-repo --model llama-local/Qwen3.6-27B
 #   PROJECT_DIR=~/projects/game ./scripts/run.sh --model llama-local/Qwen3.6-27B
+#   OPENROUTER_API_KEY=sk-or-... PROJECT_DIR=~/my-project ./scripts/run.sh --openrouter --with-internet --model openrouter/deepseek/deepseek-v4-flash-0731
 #
-# (where '--model' is an argument forwarded to pi, and an entry in the models.json)
+# (where '--model' is an argument forwarded to pi, and an entry in the models.json
+#  or a built-in OpenRouter model when using --openrouter)
 #
 # Use --shell to drop into an interactive shell instead of running pi, with
 # the exact same network and mounts the agent would get. Handy for poking at
@@ -101,6 +103,10 @@ INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
 # same network + mounts the agent itself would get.
 # --with-internet uses the "default" network (full internet access) instead
 # of the "sandboxed" network, and skips the Gradle warmup step.
+# --openrouter uses pi's built-in OpenRouter provider instead of the local
+# inference server. Requires --with-internet and OPENROUTER_API_KEY env var.
+# When used, models.json is not rendered so pi uses its full built-in
+# OpenRouter model list. The local llama-local provider is hidden.
 # --no-display disables access to a display. By default, a display is
 # available inside the container. If XQuartz is installed on the host
 # (X11 socket at /tmp/.X11-unix exists), the host display is mounted into
@@ -119,6 +125,7 @@ SHELL_MODE=false
 WITH_INTERNET=false
 NO_DISPLAY=false
 DETACH_MODE=false
+OPENROUTER_MODE=false
 PROMPT_FILE=""
 ADD_FOLDERS=()
 REMAINING_ARGS=()
@@ -127,6 +134,7 @@ while [ $# -gt 0 ]; do
     --shell) SHELL_MODE=true; shift ;;
     --with-internet) WITH_INTERNET=true; shift ;;
     --no-display) NO_DISPLAY=true; shift ;;
+    --openrouter) OPENROUTER_MODE=true; shift ;;
     --detach) DETACH_MODE=true; shift ;;
     --prompt-file)
       if [ $# -lt 2 ]; then
@@ -155,6 +163,22 @@ if [ "$SHELL_MODE" = true ] && [ "$DETACH_MODE" = true ]; then
   exit 1
 fi
 
+# --openrouter with --shell: allowed so you can debug OpenRouter auth
+# or connectivity from inside the container. The API key env file is still
+# created and passed in, so you can `curl api.openrouter.ai` etc.
+
+# --openrouter requires --with-internet (OpenRouter is a cloud API).
+if [ "$OPENROUTER_MODE" = true ] && [ "$WITH_INTERNET" != true ]; then
+  echo "--openrouter requires --with-internet." >&2
+  exit 1
+fi
+
+# --openrouter requires OPENROUTER_API_KEY to be set in the environment.
+if [ "$OPENROUTER_MODE" = true ] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
+  echo "--openrouter requires OPENROUTER_API_KEY to be set." >&2
+  exit 1
+fi
+
 # Resolve --prompt-file to an absolute path and validate it exists.
 RESOLVED_PROMPT_FILE=""
 if [ -n "$PROMPT_FILE" ]; then
@@ -175,6 +199,29 @@ fi
 # when the array is empty, and to the full array otherwise.
 if [ ${#REMAINING_ARGS[@]} -gt 0 ]; then
   set -- "${REMAINING_ARGS[@]}"
+fi
+
+# In OpenRouter mode, a --model is required. If the caller didn't pass one,
+# inject PI_SANDBOX_DEFAULT_MODEL_OPENROUTER if it is set (e.g. from the fish
+# wrapper). If neither is available, error out — we don't guess a model.
+# Append at the end (not prepend) so run.sh's arg parser has already
+# consumed all flags — consistent with how the fish wrapper injects models.
+if [ "$OPENROUTER_MODE" = true ]; then
+  has_model=false
+  for arg in "$@"; do
+    if [ "$arg" = "--model" ]; then
+      has_model=true
+      break
+    fi
+  done
+  if [ "$has_model" != true ]; then
+    if [ -n "${PI_SANDBOX_DEFAULT_MODEL_OPENROUTER:-}" ]; then
+      set -- "$@" --model "$PI_SANDBOX_DEFAULT_MODEL_OPENROUTER"
+    else
+      echo "--openrouter requires --model or PI_SANDBOX_DEFAULT_MODEL_OPENROUTER." >&2
+      exit 1
+    fi
+  fi
 fi
 
 # Resolve --add-folder paths to absolute paths and validate they exist.
@@ -263,16 +310,22 @@ get_proxy_ip() {
 #   (a) parallel sessions never stomp on each other's rendered config, and
 #   (b) the checked-in template never gets overwritten with a stale IP.
 # If with_internet is "false", appends a no-internet notice to APPEND_SYSTEM.md.
-# If extra mounts are provided (args 5+), appends a path mapping table so the
+# If openrouter_mode is "true", skips rendering models.json.
+# If extra mounts are provided (args 6+), appends a path mapping table so the
 # agent can resolve host paths the user references to their /extra/... locations.
 render_config() {
-  local proxy_ip="$1" proxy_port="$2" out_dir="$3" with_internet="$4"
-  shift 4
+  local proxy_ip="$1" proxy_port="$2" out_dir="$3" with_internet="$4" openrouter_mode="$5"
+  shift 5
   mkdir -p "$out_dir"
   cp -R "$REPO_ROOT/pi-config/." "$out_dir/"
-  sed -e "s/__EGRESS_PROXY_IP__/${proxy_ip}/g" \
-      -e "s/__EGRESS_PROXY_PORT__/${proxy_port}/g" \
-      "$REPO_ROOT/pi-config/models.json.template" > "$out_dir/models.json"
+  # When using OpenRouter, skip models.json so pi uses its built-in
+  # OpenRouter provider + model list. When using the local server,
+  # render the template with the egress proxy IP/port.
+  if [ "$openrouter_mode" != true ]; then
+    sed -e "s/__EGRESS_PROXY_IP__/${proxy_ip}/g" \
+        -e "s/__EGRESS_PROXY_PORT__/${proxy_port}/g" \
+        "$REPO_ROOT/pi-config/models.json.template" > "$out_dir/models.json"
+  fi
   if [ "$with_internet" != true ]; then
     printf '\n> **No internet access is available.** Do not attempt to make
 > network requests, fetch URLs, or install packages from remote registries.\n' \
@@ -422,7 +475,7 @@ if [ "$WITH_INTERNET" = true ]; then
 else
   MODEL_PROXY_IP="$EGRESS_PROXY_IP"
 fi
-render_config "$MODEL_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET" \
+render_config "$MODEL_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET" "$OPENROUTER_MODE" \
   "${EXTRA_FOLDER_MOUNTS[@]+"${EXTRA_FOLDER_MOUNTS[@]}"}"
 
 # If the project has a Gradle wrapper, set up the container-dedicated Gradle
@@ -485,12 +538,30 @@ if [ "$NO_DISPLAY" != true ]; then
   fi
 fi
 
+# OpenRouter API key: written to a temp env-file so it never appears in
+# the container CLI's process arguments (visible via `ps`). The file is
+# cleaned up after the container exits.
+OPENROUTER_ENV_FILE=""
+OPENROUTER_ENV_FILE_ARGS=()
+if [ "$OPENROUTER_MODE" = true ]; then
+  OPENROUTER_ENV_FILE=$(mktemp)
+  chmod 600 "$OPENROUTER_ENV_FILE"
+  printf 'OPENROUTER_API_KEY=%s\n' "$OPENROUTER_API_KEY" > "$OPENROUTER_ENV_FILE"
+  OPENROUTER_ENV_FILE_ARGS=(--env-file "$OPENROUTER_ENV_FILE")
+  # Clean up the env file after the container exits.
+  trap 'rm -f "$OPENROUTER_ENV_FILE"' EXIT
+fi
+
 if [ "$SHELL_MODE" = true ]; then
   local_network_label="sandboxed"
   if [ "$WITH_INTERNET" = true ]; then
     local_network_label="default (internet access)"
   fi
-  echo "Shell mode: ${local_network_label} network, proxy reachable at ${EGRESS_PROXY_IP}:${INFERENCE_SERVER_HOST_PORT}" >&2
+  if [ "$OPENROUTER_MODE" = true ]; then
+    echo "Shell mode: ${local_network_label} network (OpenRouter mode)" >&2
+  else
+    echo "Shell mode: ${local_network_label} network, proxy reachable at ${EGRESS_PROXY_IP}:${INFERENCE_SERVER_HOST_PORT}" >&2
+  fi
   container run --rm -it \
     --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
     --entrypoint sh \
@@ -504,6 +575,7 @@ if [ "$SHELL_MODE" = true ]; then
     --env "PROJECT_NAME=$PROJECT_NAME" \
     --env "GRADLE_USER_HOME=/home/pi/.gradle" \
     ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
+    ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} \
     "$IMAGE_TAG" \
     -c '
       if [ "${DISPLAY_MODE}" = "xvfb" ]; then
@@ -546,6 +618,7 @@ if [ "$DETACH_MODE" = true ]; then
     --env "DETACH_MODE=true" \
     --env "GRADLE_USER_HOME=/home/pi/.gradle" \
     ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
+    ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} \
     "$IMAGE_TAG" \
     "$@" 1>&2
 
@@ -573,6 +646,7 @@ else
     ${PROMPT_FILE:+--env "PROMPT_FILE=/tmp/pi-prompt.txt"} \
     --env "GRADLE_USER_HOME=/home/pi/.gradle" \
     ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
+    ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} \
     "$IMAGE_TAG" \
     "$@"
 fi
