@@ -90,12 +90,11 @@ RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@${PI_VERSION
          exit 1; \
        fi
 
-ARG PI_UID=1000
-ARG PI_GID=1000
-# The eclipse-temurin base image does not pre-create a user at UID/GID 1000,
-# so we create the 'pi' user and group from scratch.
-RUN groupadd --gid ${PI_GID} pi \
- && useradd --uid ${PI_UID} --gid ${PI_GID} --create-home --shell /bin/bash pi
+# Create the 'pi' user and group. Don't pin UID/GID — let the system
+# assign free values so this works regardless of what the base image
+# already has at 1000:1000 (Noble pre-creates an 'ubuntu' user there).
+RUN groupadd pi \
+ && useradd --gid pi --create-home --shell /bin/bash pi
 
 # Set environment variables for pi here.
 #
