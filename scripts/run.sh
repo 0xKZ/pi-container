@@ -112,6 +112,7 @@ INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
 # (X11 socket at /tmp/.X11-unix exists), the host display is mounted into
 # the container. Otherwise, a virtual framebuffer (Xvfb) is started inside
 # the container for headless rendering.
+# --verbose shows verbose output from subprocesses (e.g. Xvfb warnings).
 # --add-folder <path> mounts an additional folder (relative or absolute) at
 # /extra/<folder-name> inside the container, so the agent can read files from
 # other projects or locations. Can be repeated for multiple folders.
@@ -125,6 +126,7 @@ SHELL_MODE=false
 WITH_INTERNET=false
 NO_DISPLAY=false
 DETACH_MODE=false
+VERBOSE=false
 OPENROUTER_MODE=false
 PROMPT_FILE=""
 ADD_FOLDERS=()
@@ -136,6 +138,7 @@ while [ $# -gt 0 ]; do
     --no-display) NO_DISPLAY=true; shift ;;
     --openrouter) OPENROUTER_MODE=true; shift ;;
     --detach) DETACH_MODE=true; shift ;;
+    --verbose) VERBOSE=true; shift ;;
     --prompt-file)
       if [ $# -lt 2 ]; then
         echo "--prompt-file requires a path argument." >&2
@@ -533,8 +536,10 @@ if [ "$NO_DISPLAY" != true ]; then
   else
     DISPLAY_MODE="xvfb"
     DISPLAY_ENV_ARGS=(--env "DISPLAY=:99" --env "DISPLAY_MODE=xvfb")
-    echo "Display mode: Xvfb (virtual framebuffer at :99)." >&2
-    echo "  (Install XQuartz on the Mac for real display access.)" >&2
+    if [ "$VERBOSE" = true ]; then
+      echo "Display mode: Xvfb (virtual framebuffer at :99)." >&2
+      echo "  (Install XQuartz on the Mac for real display access.)" >&2
+    fi
   fi
 fi
 
@@ -574,12 +579,15 @@ if [ "$SHELL_MODE" = true ]; then
     --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
     --env "PROJECT_NAME=$PROJECT_NAME" \
     --env "GRADLE_USER_HOME=/home/pi/.gradle" \
+    --env "VERBOSE=$VERBOSE" \
     ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
     ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} \
     "$IMAGE_TAG" \
     -c '
       if [ "${DISPLAY_MODE}" = "xvfb" ]; then
-        Xvfb "${DISPLAY:-:99}" -screen 0 1920x1080x24 &
+        XVFB_LOG="/dev/null"
+        [ "${VERBOSE}" = "true" ] && XVFB_LOG=""
+        Xvfb "${DISPLAY:-:99}" -screen 0 1920x1080x24 2>"$XVFB_LOG" &
         for i in 1 2 3 4 5; do
           if xdpyinfo >/dev/null 2>&1; then break; fi
           sleep 0.2
@@ -617,6 +625,7 @@ if [ "$DETACH_MODE" = true ]; then
     --env "PROMPT_FILE=/tmp/pi-prompt.txt" \
     --env "DETACH_MODE=true" \
     --env "GRADLE_USER_HOME=/home/pi/.gradle" \
+    --env "VERBOSE=$VERBOSE" \
     ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
     ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} \
     "$IMAGE_TAG" \
@@ -645,6 +654,7 @@ else
     --env "PROJECT_NAME=$PROJECT_NAME" \
     ${PROMPT_FILE:+--env "PROMPT_FILE=/tmp/pi-prompt.txt"} \
     --env "GRADLE_USER_HOME=/home/pi/.gradle" \
+    --env "VERBOSE=$VERBOSE" \
     ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
     ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} \
     "$IMAGE_TAG" \
