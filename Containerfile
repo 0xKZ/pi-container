@@ -20,9 +20,9 @@
 FROM node:22-bookworm-slim AS node-source
 
 # This is the base for our final image: Eclipse Temurin's official JDK
-# image. It runs on Ubuntu 22.04 ("jammy"), which uses Debian-style apt
+# image. It runs on Ubuntu 24.04 ("noble"), which uses Debian-style apt
 # packaging. All standard Debian/Ubuntu package names work as expected.
-FROM eclipse-temurin:21-jdk-jammy
+FROM eclipse-temurin:21-jdk-noble
 
 # --------------------------------------------------------------------------
 # Bring Node.js + npm into this image by copying the binaries straight out
@@ -128,7 +128,8 @@ USER pi
 WORKDIR /projects
 
 # Install Rust via rustup (latest stable) — edition 2024 requires rustc 1.85+.
-# Ubuntu 22.04 apt ships rustc 1.75 which is too old.
+# Ubuntu 24.04 apt ships rustc 1.85 which is sufficient, but we use rustup
+# for the latest stable and to get clippy included cleanly.
 # Run this as the 'pi' user so the install lands in /home/pi/.cargo/bin,
 # which is fully accessible at runtime (avoids the /root permission trap).
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy \
