@@ -98,6 +98,7 @@ GRADLE_WARMUP_SCRIPT="${GRADLE_WARMUP_SCRIPT:-$REPO_ROOT/scripts/gradle-warmup.s
 # your setup uses a different address.
 INFERENCE_SERVER_HOST_IP="${INFERENCE_SERVER_HOST_IP:-192.168.64.1}"
 INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
+PROVIDER_API_KEY="${PROVIDER_API_KEY:-not-required}"
 
 # --shell drops into an interactive shell instead of launching pi, with the
 # same network + mounts the agent itself would get.
@@ -327,6 +328,7 @@ render_config() {
   if [ "$openrouter_mode" != true ]; then
     sed -e "s/__EGRESS_PROXY_IP__/${proxy_ip}/g" \
         -e "s/__EGRESS_PROXY_PORT__/${proxy_port}/g" \
+        -e "s/__PROVIDER_API_KEY__/${PROVIDER_API_KEY}/g" \
         "$REPO_ROOT/pi-config/models.json.template" > "$out_dir/models.json"
   fi
   if [ "$with_internet" != true ]; then

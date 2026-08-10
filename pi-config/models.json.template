@@ -3,7 +3,7 @@
     "llama-local": {
       "baseUrl": "http://__EGRESS_PROXY_IP__:__EGRESS_PROXY_PORT__/v1",
       "api": "openai-completions",
-      "apiKey": "not-required",
+      "apiKey": "__PROVIDER_API_KEY__",
       "models": [
         {
           "id": "unsloth/Qwen3.6-27B-GGUF:Q6_K",

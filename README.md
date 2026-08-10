@@ -115,6 +115,7 @@ When pi finishes its session, the container entrypoint drops you into a bash she
 | `INFERENCE_SERVER_HOST_PORT` | `8080` | Port of the inference server |
 | `GRADLE_WARMUP_SCRIPT` | `scripts/gradle-warmup.sh` | Custom warmup script path |
 | `EGRESS_PROXY_IP` | *(auto-detected)* | The proxy's IP on the active network (sandboxed or default, depending on `--with-internet`); exposed as an env var inside the container |
+| `PROVIDER_API_KEY` | `not-required` | API key for your local inference server. Substituted into `models.json` at launch time. Set this when your server requires authentication; leave unset for servers like `llama-server` that don't. |
 | `OPENROUTER_API_KEY` | *(required with `--openrouter`)* | OpenRouter API key. Passed into the container only when `--openrouter` is used. |
 
 > **Fish wrapper variables** (used by the `pi-agent` convenience wrapper, not `run.sh` itself):
