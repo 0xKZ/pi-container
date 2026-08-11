@@ -1,10 +1,10 @@
 {
   "theme": "gruvbox-dark-hard",
   "sessionDir": ".pi/sessions",
-  "httpIdleTimeoutMs": 3600000,
+  "httpIdleTimeoutMs": __HTTP_IDLE_TIMEOUT_MS__,
   "retry": {
     "provider": {
-      "timeoutMs": 3600000
+      "timeoutMs": __PROVIDER_TIMEOUT_MS__
     }
   }
 }

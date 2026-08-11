@@ -100,6 +100,16 @@ INFERENCE_SERVER_HOST_IP="${INFERENCE_SERVER_HOST_IP:-192.168.64.1}"
 INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
 PROVIDER_API_KEY="${PROVIDER_API_KEY:-not-required}"
 
+# Timeout settings (in milliseconds). Override these if your inference server
+# has extremely slow prefill that causes the pi client to retry before the
+# first token arrives.
+#   PI_HTTP_IDLE_TIMEOUT_MS  — HTTP header/body idle timeout (no data received).
+#                              Default: 7200000 (2 hours). Set to 0 to disable.
+#   PI_PROVIDER_TIMEOUT_MS   — Total provider request timeout.
+#                              Default: 7200000 (2 hours).
+PI_HTTP_IDLE_TIMEOUT_MS="${PI_HTTP_IDLE_TIMEOUT_MS:-7200000}"
+PI_PROVIDER_TIMEOUT_MS="${PI_PROVIDER_TIMEOUT_MS:-7200000}"
+
 # --shell drops into an interactive shell instead of launching pi, with the
 # same network + mounts the agent itself would get.
 # --with-internet uses the "default" network (full internet access) instead
@@ -308,11 +318,12 @@ get_proxy_ip() {
 }
 
 # Builds the config dir we'll mount as /home/pi/.pi/agent. Copies everything
-# from pi-config/ as-is, then renders models.json from models.json.template,
-# substituting in today's egress-proxy IP/port. We render into a fresh temp
-# dir per run (rather than editing pi-config/models.json in place) so that:
+# from pi-config/ as-is, then renders models.json from models.json.template
+# and settings.json from settings.json, substituting in placeholders.
+# We render into a fresh temp dir per run (rather than editing files in place)
+# so that:
 #   (a) parallel sessions never stomp on each other's rendered config, and
-#   (b) the checked-in template never gets overwritten with a stale IP.
+#   (b) the checked-in templates never get overwritten with stale values.
 # If with_internet is "false", appends a no-internet notice to APPEND_SYSTEM.md.
 # If openrouter_mode is "true", skips rendering models.json.
 # If extra mounts are provided (args 6+), appends a path mapping table so the
@@ -322,6 +333,10 @@ render_config() {
   shift 5
   mkdir -p "$out_dir"
   cp -R "$REPO_ROOT/pi-config/." "$out_dir/"
+  # Render settings.json with timeout values from environment.
+  sed -e "s/__HTTP_IDLE_TIMEOUT_MS__/${PI_HTTP_IDLE_TIMEOUT_MS}/g" \
+      -e "s/__PROVIDER_TIMEOUT_MS__/${PI_PROVIDER_TIMEOUT_MS}/g" \
+      "$REPO_ROOT/pi-config/settings.json" > "$out_dir/settings.json"
   # When using OpenRouter, skip models.json so pi uses its built-in
   # OpenRouter provider + model list. When using the local server,
   # render the template with the egress proxy IP/port.
