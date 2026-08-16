@@ -7,7 +7,16 @@
       "models": [
         {
           "id": "unsloth/Qwen3.6-27B-GGUF:Q6_K",
-          "name": "llama-local/Qwen3.6-27B"
+          "name": "llama-local/Qwen3.6-27B",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "high": null,
+            "low": "low",
+            "medium": "medium",
+            "xhigh": "xhigh"
+          }
         },
         {
           "id": "deepseek-v4-colibri",
