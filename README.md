@@ -18,14 +18,14 @@ A wrapper that runs the pi coding agent inside a network-sandboxed Apple contain
 
 The `Containerfile` defines what tools and runtimes are available inside the agent container. It is set up for my personal use case — edit it to add or remove packages, then rebuild with `./scripts/build.sh`.
 
-## Adding models
+## Models
 
-Models are defined in `pi-config/models.json.template`. Each model entry needs a provider block with a `baseUrl` pointing through the egress proxy (use `__EGRESS_PROXY_IP__` and `__EGRESS_PROXY_PORT__` as placeholders — they are rendered at launch time). Add new providers or models to this template, then pass the model name with `--model` when running the agent.
+`llama-local/current` is just a stable slot pointing at the local OpenAI-compatible server — whatever model it is currently serving. To add or change providers/models, edit `pi-config/models.json.template` (see the [pi models documentation](https://pi.dev/docs/latest/models) for the format).
 
 ## Running the agent
 
 ```
-PROJECT_DIR=~/development/my_project_directory ./scripts/run.sh --model llama-local/Qwen3.6-27B
+PROJECT_DIR=~/development/my_project_directory ./scripts/run.sh --model llama-local/current
 ```
 
 ### Running with internet access
@@ -33,7 +33,7 @@ PROJECT_DIR=~/development/my_project_directory ./scripts/run.sh --model llama-lo
 Use `--with-internet` to launch the container on the `default` network with full internet access. This also skips the Gradle warmup step since the container can download dependencies on its own.
 
 ```
-PROJECT_DIR=~/my-project ./scripts/run.sh --with-internet --model llama-local/Qwen3.6-27B
+PROJECT_DIR=~/my-project ./scripts/run.sh --with-internet --model llama-local/current
 ```
 
 ### Running with OpenRouter
@@ -123,7 +123,6 @@ When pi finishes its session, the container entrypoint drops you into a bash she
 >| Variable | Default | Description |
 >|---|---|---|
 >| `PI_SANDBOX_RUN_SCRIPT` | *(required)* | Path to `scripts/run.sh` |
->| `PI_SANDBOX_DEFAULT_MODEL` | *(none)* | Default model for local/sandboxed runs |
 >| `PI_SANDBOX_DEFAULT_MODEL_OPENROUTER` | *(none)* | Default model when using `--openrouter` |
 
 # Troubleshooting
@@ -154,16 +153,14 @@ The file `pi-config/APPEND_SYSTEM.md` is appended to pi's system prompt at runti
 
 Optional fish-only wrapper that lets you run `pi-agent` from any project directory.
 
-First, set global variables (adjust the paths and models as needed):
+First, set global variables (adjust the paths and model as needed):
 
 ```fish
 set -U PI_SANDBOX_RUN_SCRIPT ~/path/to/pi-container/scripts/run.sh
-set -U PI_SANDBOX_DEFAULT_MODEL llama-local/Qwen3.6-27B
 set -U PI_SANDBOX_DEFAULT_MODEL_OPENROUTER openrouter/deepseek/deepseek-v4-flash-0731
 ```
 
-- `PI_SANDBOX_DEFAULT_MODEL` — default model for local/sandboxed runs
-- `PI_SANDBOX_DEFAULT_MODEL_OPENROUTER` — default model when using `--openrouter`
+- `PI_SANDBOX_DEFAULT_MODEL_OPENROUTER` — default model when using `--openrouter` (local runs don't need one — pi falls back to `llama-local/current` on its own)
 
 Then copy the wrapper function into your fish functions directory:
 
@@ -175,11 +172,11 @@ After that, you can run `pi-agent` from any project directory:
 
 ```fish
 cd ~/my-project
-pi-agent                          # runs with the default local model
-pi-agent --openrouter             # runs with the default OpenRouter model
+pi-agent                          # sandboxed run with the local model
+pi-agent --openrouter --with-internet   # runs with the default OpenRouter model
 pi-agent --shell                  # drops into a debugging shell
 pi-agent --with-internet          # runs with full internet access
-pi-agent --model other-model       # overrides the default model for this call
+pi-agent --model other-model      # use a specific model for this call
 ```
 
 The script lives in `scripts/fish/` so other wrappers (e.g. for different agents) can coexist without cluttering the README.

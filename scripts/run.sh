@@ -8,9 +8,11 @@
 # Additional folders can be mounted with --add-folder <path> -> /extra/<name>
 #
 # Example:
-#   PROJECT_DIR=~/projects/small-test-repo ./scripts/run.sh --model llama-local/Qwen3.6-27B
-#   PROJECT_DIR=~/projects/my-project ./scripts/run.sh --add-folder ../other-repo --model llama-local/Qwen3.6-27B
-#   PROJECT_DIR=~/projects/game ./scripts/run.sh --model llama-local/Qwen3.6-27B
+#   PROJECT_DIR=~/projects/small-test-repo ./scripts/run.sh --model llama-local/current
+#   PROJECT_DIR=~/projects/my-project ./scripts/run.sh --add-folder ../other-repo --model llama-local/current
+#   PROJECT_DIR=~/projects/game ./scripts/run.sh --model llama-local/current
+#   (llama-local/current is a stable slot: it always means "whatever model
+#    is loaded in llama-server")
 #   OPENROUTER_API_KEY=sk-or-... PROJECT_DIR=~/my-project ./scripts/run.sh --openrouter --with-internet --model openrouter/deepseek/deepseek-v4-flash-0731
 #
 # (where '--model' is an argument forwarded to pi, and an entry in the models.json

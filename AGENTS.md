@@ -35,7 +35,7 @@ with a network sandbox. The agent can reach only a local inference server — no
 ./scripts/build.sh
 
 # Run the agent on a project
-PROJECT_DIR=~/my-project ./scripts/run.sh --model llama-local/Qwen3.6-27B
+PROJECT_DIR=~/my-project ./scripts/run.sh --model llama-local/current
 
 # Drop into a shell for testing
 ./scripts/run.sh --shell
@@ -44,7 +44,7 @@ PROJECT_DIR=~/my-project ./scripts/run.sh --model llama-local/Qwen3.6-27B
 ./scripts/run.sh --with-internet
 
 # Run without display access (display is on by default)
-./scripts/run.sh --no-display --model llama-local/Qwen3.6-27B
+./scripts/run.sh --no-display --model llama-local/current
 ```
 
 ## Apple container docs
