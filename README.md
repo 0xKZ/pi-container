@@ -18,14 +18,24 @@ A wrapper that runs the pi coding agent inside a network-sandboxed Apple contain
 
 The `Containerfile` defines what tools and runtimes are available inside the agent container. It is set up for my personal use case — edit it to add or remove packages, then rebuild with `./scripts/build.sh`.
 
-## Adding models
+## The local model slot (`llama-local/current`)
 
-Models are defined in `pi-config/models.json.template`. Each model entry needs a provider block with a `baseUrl` pointing through the egress proxy (use `__EGRESS_PROXY_IP__` and `__EGRESS_PROXY_PORT__` as placeholders — they are rendered at launch time). Add new providers or models to this template, then pass the model name with `--model` when running the agent.
+The `llama-local` provider points at a single llama-server, which serves exactly one model at a time — whichever model you have loaded (it ignores the `model` field in requests). For that reason `pi-config/models.json.template` declares exactly **one stable slot** instead of one entry per model:
+
+- **`id: "current"`** — what pi sends in API requests. llama-server ignores it, so it never changes and `--model llama-local/current` works no matter what you have loaded. This is the name to use everywhere (scripts, wrappers, muscle memory).
+- **`name`** — a human-readable label shown in `/model`. The `llama-local-current` extension (in `pi-config/extensions/`) fills it in automatically from the server's `/v1/models` endpoint at startup, so the picker shows the model you'll actually get. Switching models requires **no** config edits; if you remove the extension, update the label by hand — it is documentation only and never affects which model answers.
+- **`reasoning` / `thinkingLevelMap`** — the only fields worth editing: adjust them when the model you switch to has different thinking capabilities.
+
+Don't add one entry per GGUF file: llama-server can't switch models per request, so extra entries would be misleading. To use a different model, load it in llama-server (optionally start it with `--alias current` so the name the server reports matches what pi requests) and run pi as usual.
+
+### Adding other providers
+
+To add a genuinely different provider (not just another model on the same server), add a provider block to `pi-config/models.json.template` with a `baseUrl` pointing through the egress proxy (use `__EGRESS_PROXY_IP__` and `__EGRESS_PROXY_PORT__` as placeholders — they are rendered at launch time), then pass its model with `--model` when running the agent.
 
 ## Running the agent
 
 ```
-PROJECT_DIR=~/development/my_project_directory ./scripts/run.sh --model llama-local/Qwen3.6-27B
+PROJECT_DIR=~/development/my_project_directory ./scripts/run.sh --model llama-local/current
 ```
 
 ### Running with internet access
@@ -33,7 +43,7 @@ PROJECT_DIR=~/development/my_project_directory ./scripts/run.sh --model llama-lo
 Use `--with-internet` to launch the container on the `default` network with full internet access. This also skips the Gradle warmup step since the container can download dependencies on its own.
 
 ```
-PROJECT_DIR=~/my-project ./scripts/run.sh --with-internet --model llama-local/Qwen3.6-27B
+PROJECT_DIR=~/my-project ./scripts/run.sh --with-internet --model llama-local/current
 ```
 
 ### Running with OpenRouter
@@ -158,7 +168,7 @@ First, set global variables (adjust the paths and models as needed):
 
 ```fish
 set -U PI_SANDBOX_RUN_SCRIPT ~/path/to/pi-container/scripts/run.sh
-set -U PI_SANDBOX_DEFAULT_MODEL llama-local/Qwen3.6-27B
+set -U PI_SANDBOX_DEFAULT_MODEL llama-local/current
 set -U PI_SANDBOX_DEFAULT_MODEL_OPENROUTER openrouter/deepseek/deepseek-v4-flash-0731
 ```
 

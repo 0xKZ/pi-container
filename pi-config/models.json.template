@@ -1,4 +1,24 @@
 {
+  // The llama-local provider points at a single llama-server, which serves
+  // exactly one model at a time: whichever model you have loaded. It also
+  // ignores the "model" field in requests. So instead of one entry per
+  // model, there is exactly ONE stable "slot" entry here.
+  //
+  //   id   "current" is sent in every API request. llama-server ignores it,
+  //         so it never changes. Always run pi with:
+  //             --model llama-local/current
+  //   name Human-readable label shown in /model. The llama-local-current
+  //         extension (pi-config/extensions/) fills this in automatically
+  //         from the server's /v1/models endpoint at startup. If the
+  //         extension is removed, update it by hand when you switch models
+  //         -- it is documentation only and never affects which model
+  //         answers.
+  //   reasoning / thinkingLevelMap The only fields worth editing: adjust
+  //         them when the model you switch to has different thinking
+  //         capabilities.
+  //
+  // Do NOT add one entry per GGUF file: llama-server cannot switch models
+  // per request, so extra entries would be misleading.
   "providers": {
     "llama-local": {
       "baseUrl": "http://__EGRESS_PROXY_IP__:__EGRESS_PROXY_PORT__/v1",
@@ -6,8 +26,8 @@
       "apiKey": "__PROVIDER_API_KEY__",
       "models": [
         {
-          "id": "unsloth/Qwen3.8-27B-GGUF:Q6_K",
-          "name": "llama-local/Qwen3.8-27B",
+          "id": "current",
+          "name": "currently loaded model (llama-server)",
           "reasoning": true,
           "thinkingLevelMap": {
             "off": null,
@@ -17,10 +37,6 @@
             "medium": "medium",
             "xhigh": "xhigh"
           }
-        },
-        {
-          "id": "deepseek-v4-colibri",
-          "name": "llama-local/DeepSeek-V4-Colibri"
         }
       ]
     }
