@@ -50,7 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zip unzip xz-utils bzip2 \
     jq \
     patch htop tmux \
-    git ripgrep less vim \
+    git ripgrep less vim fish \
     openssh-client \
     ffmpeg imagemagick \
     python3 python3-pip \
