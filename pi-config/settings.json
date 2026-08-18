@@ -1,6 +1,7 @@
 {
   "theme": "gruvbox-dark-hard",
   "sessionDir": ".pi/sessions",
+  "packages": ["/opt/pi-packages/pi-subagent"],
   "httpIdleTimeoutMs": __HTTP_IDLE_TIMEOUT_MS__,
   "retry": {
     "provider": {
