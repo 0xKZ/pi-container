@@ -13,6 +13,11 @@
   //   reasoning / thinkingLevelMap The only fields worth editing: adjust
   //         them when the model you switch to has different thinking
   //         capabilities.
+  //   contextWindow  Rendered from the LLAMA_CONTEXT_WINDOW environment
+  //         variable (see scripts/run.sh, default 128000). Match it to the
+  //         context you run llama-server with (its -c flag). You can read
+  //         the value from the running server:
+  //             curl -s localhost:8080/v1/models | jq -r '.data[0].meta.n_ctx'
   //
   // Do NOT add one entry per GGUF file: llama-server cannot switch models
   // per request, so extra entries would be misleading.
@@ -25,6 +30,7 @@
         {
           "id": "current",
           "name": "currently loaded model (llama-server)",
+          "contextWindow": __CONTEXT_WINDOW__,
           "reasoning": true,
           "thinkingLevelMap": {
             "off": null,

@@ -102,6 +102,14 @@ INFERENCE_SERVER_HOST_IP="${INFERENCE_SERVER_HOST_IP:-192.168.64.1}"
 INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
 PROVIDER_API_KEY="${PROVIDER_API_KEY:-not-required}"
 
+# Context length (in tokens) of the model loaded in llama-server. pi uses
+# this to decide when to compact, so match it to the -c flag you pass to
+# llama-server. The default 128000 mirrors pi's built-in default. Query the
+# running server for its actual value:
+#   curl -s localhost:8080/v1/models | jq -r '.data[0].meta.n_ctx'
+# Example: LLAMA_CONTEXT_WINDOW=32768 ./scripts/run.sh --model llama-local/current
+LLAMA_CONTEXT_WINDOW="${LLAMA_CONTEXT_WINDOW:-128000}"
+
 # Timeout settings (in milliseconds). Override these if your inference server
 # has extremely slow prefill that causes the pi client to retry before the
 # first token arrives.
@@ -346,6 +354,7 @@ render_config() {
     sed -e "s/__EGRESS_PROXY_IP__/${proxy_ip}/g" \
         -e "s/__EGRESS_PROXY_PORT__/${proxy_port}/g" \
         -e "s/__PROVIDER_API_KEY__/${PROVIDER_API_KEY}/g" \
+        -e "s/__CONTEXT_WINDOW__/${LLAMA_CONTEXT_WINDOW}/g" \
         "$REPO_ROOT/pi-config/models.json.template" > "$out_dir/models.json"
   fi
   if [ "$with_internet" != true ]; then

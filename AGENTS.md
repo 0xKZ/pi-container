@@ -15,7 +15,7 @@ with a network sandbox. The agent can reach only a local inference server — no
 | `scripts/entrypoint.sh` | Container entrypoint — runs `pi`, then drops to a shell on exit |
 | `scripts/gradle-warmup.sh` | Pre-downloads Gradle deps on the default network |
 | `pi-config/` | Config mounted into the container as `/home/pi/.pi/agent` (settings, models, subagent definitions) |
-| `pi-config/models.json.template` | Template rendered at launch with the egress proxy IP |
+| `pi-config/models.json.template` | Template rendered at launch |
 | `pi-config/agents/` | pi-subagent definitions (`*.md`) mounted as the container's user agents dir |
 
 ## How it works
