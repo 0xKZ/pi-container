@@ -18,6 +18,14 @@
   //         context you run llama-server with (its -c flag). You can read
   //         the value from the running server:
   //             curl -s localhost:8080/v1/models | jq -r '.data[0].meta.n_ctx'
+  //   maxTokens      Ceiling for the model's output per response, including
+  //         thinking. pi's built-in default is 16384, which is too small for
+  //         models that think in 30k-token bursts. Keep it <= contextWindow.
+  //         Note: pi rejects non-positive values (there is no "unlimited"
+  //         sentinel for custom models), so raise this number if you need a
+  //         higher ceiling.
+  //   compat.maxTokensField  llama-server's OpenAI-compatible endpoint expects
+  //         "max_tokens", not the newer "max_completion_tokens".
   //
   // Do NOT add one entry per GGUF file: llama-server cannot switch models
   // per request, so extra entries would be misleading.
@@ -31,7 +39,11 @@
           "id": "current",
           "name": "currently loaded model (llama-server)",
           "contextWindow": __CONTEXT_WINDOW__,
+          "maxTokens": 65536,
           "reasoning": true,
+          "compat": {
+            "maxTokensField": "max_tokens"
+          },
           "thinkingLevelMap": {
             "off": null,
             "minimal": null,
