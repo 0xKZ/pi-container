@@ -72,6 +72,14 @@ RUN npm install -g @anthropic-ai/claude-code \
 # documentation/tutorials) expect.
 RUN ln -s "$(which fdfind)" /usr/local/bin/fd
 
+# Install uv (Python package/project manager by Astral) from the official
+# installer script, the same pattern as the rustup install below. We pin the
+# install dir to /usr/local/bin (via UV_INSTALL_DIR) instead of the default
+# ~/.local/bin because that default would land in /root/.local/bin and be
+# unusable once we switch to the 'pi' user below.
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
+    && uv --version
+
 # Pinned deliberately -- avoid auto-upgrading to a version that might
 # change behavior we've already tuned our workflow around.
 ARG PI_VERSION=0.84.1
