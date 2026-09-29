@@ -82,7 +82,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 
 # Pinned deliberately -- avoid auto-upgrading to a version that might
 # change behavior we've already tuned our workflow around.
-ARG PI_VERSION=0.84.1
+ARG PI_VERSION=0.87.1
 
 # "--ignore-scripts" is suggested by the pi documentation itself.
 #
