@@ -97,8 +97,13 @@ GRADLE_WARMUP_SCRIPT="${GRADLE_WARMUP_SCRIPT:-$REPO_ROOT/scripts/gradle-warmup.s
 # --------------------------------------------------------------------------
 
 # Inference server host IP (Apple vmnet gateway). Override via env var if
-# your setup uses a different address.
-INFERENCE_SERVER_HOST_IP="${INFERENCE_SERVER_HOST_IP:-192.168.64.1}"
+# your setup uses a different address. When unset, we auto-detect it from
+# the default network's gateway later (see detect_host_gateway below) --
+# the pinned fallback below only kicks in if detection fails. The IP is NOT
+# stable across `container` versions: the default network's subnet moved
+# from 192.168.64.0/24 (container <= 1.4) to 192.168.65.0/24 (1.5+), so the
+# old hardcoded .64.1 silently went dead after an upgrade.
+INFERENCE_SERVER_HOST_IP="${INFERENCE_SERVER_HOST_IP:-}"
 INFERENCE_SERVER_HOST_PORT="${INFERENCE_SERVER_HOST_PORT:-8080}"
 PROVIDER_API_KEY="${PROVIDER_API_KEY:-not-required}"
 
@@ -281,6 +286,19 @@ ensure_container_service() {
 
   echo "Container service is not running. Starting..." >&2
   container system start
+}
+
+# Returns the host's IPv4 gateway address on the `container` default network,
+# i.e. the address from which the Mac host is reachable to containers on that
+# network (this is the address our llama-server listens on). We read it from
+# `container network inspect default` rather than hardcoding it, because the
+# vmnet subnet is chosen dynamically and has changed across container releases
+# (192.168.64.0/24 -> 192.168.65.0/24 between 1.4 and 1.5).
+# Prints the gateway IP and 0 on success; prints nothing and 1 on failure.
+detect_host_gateway() {
+  [ "$(uname -s)" = "Darwin" ] || return 1
+  container network inspect default 2>/dev/null \
+    | jq -er '.[0].status.ipv4Gateway' 2>/dev/null
 }
 
 # Creates the internal (no-internet-route) network if it doesn't already
@@ -468,6 +486,18 @@ wait_for_egress_proxy() {
 }
 
 ensure_container_service
+
+# Resolve the inference-server host IP. A user-provided INFERENCE_SERVER_HOST_IP
+# wins; otherwise detect it from the default network's gateway, falling back to
+# the legacy hardcoded .64.1 only when the default network can't be inspected.
+if [ -z "$INFERENCE_SERVER_HOST_IP" ]; then
+  if detected="$(detect_host_gateway)" && [ -n "$detected" ]; then
+    INFERENCE_SERVER_HOST_IP="$detected"
+  else
+    INFERENCE_SERVER_HOST_IP="192.168.64.1"
+  fi
+fi
+
 ensure_sandboxed_network
 
 # When --with-internet is set, the agent runs on the default network with
