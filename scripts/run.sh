@@ -665,6 +665,43 @@ if [ "$OPENROUTER_MODE" = true ]; then
   trap 'rm -f "$OPENROUTER_ENV_FILE"' EXIT
 fi
 
+# --- Shared `container run` args ------------------------------------------
+# All three run modes below (shell / detached / interactive) launch the same
+# environment: same network, mounts, and env vars. Build the common part
+# once so the modes only differ in their actual differentiators (tty, -d,
+# entrypoint, prompt file) and can't drift apart.
+NETWORK_NAME="sandboxed"
+if [ "$WITH_INTERNET" = true ]; then
+  NETWORK_NAME="default"
+fi
+
+RUN_ARGS=(
+  --network "$NETWORK_NAME"
+  --memory "$MEMORY"
+  --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent"
+  --volume "$PROJECT_DIR:/projects/$PROJECT_NAME"
+  --workdir "/projects/$PROJECT_NAME"
+  --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP"
+  --env "INFERENCE_SERVER_HOST_PORT=$INFERENCE_SERVER_HOST_PORT"
+  --env "PROJECT_NAME=$PROJECT_NAME"
+  --env "GRADLE_USER_HOME=/home/pi/.gradle"
+  --env "VERBOSE=$VERBOSE"
+)
+RUN_ARGS+=( ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} )
+RUN_ARGS+=( ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} )
+RUN_ARGS+=( ${DISPLAY_VOLUME_ARGS[@]+"${DISPLAY_VOLUME_ARGS[@]}"} )
+RUN_ARGS+=( ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} )
+RUN_ARGS+=( ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} )
+
+# Prompt file args, mounted + exported only when --prompt-file was given.
+PROMPT_ARGS=()
+if [ -n "$PROMPT_FILE" ]; then
+  PROMPT_ARGS=(
+    --volume "$RESOLVED_PROMPT_FILE:/tmp/pi-prompt.txt:ro"
+    --env "PROMPT_FILE=/tmp/pi-prompt.txt"
+  )
+fi
+
 if [ "$SHELL_MODE" = true ]; then
   local_network_label="sandboxed"
   if [ "$WITH_INTERNET" = true ]; then
@@ -676,21 +713,8 @@ if [ "$SHELL_MODE" = true ]; then
     echo "Shell mode: ${local_network_label} network, proxy reachable at ${EGRESS_PROXY_IP}:${INFERENCE_SERVER_HOST_PORT}" >&2
   fi
   container run --rm -it \
-    --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
     --entrypoint sh \
-    --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
-    ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
-    ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
-    ${DISPLAY_VOLUME_ARGS[@]+"${DISPLAY_VOLUME_ARGS[@]}"} \
-    --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
-    --workdir "/projects/$PROJECT_NAME" \
-    --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
-    --env "INFERENCE_SERVER_HOST_PORT=$INFERENCE_SERVER_HOST_PORT" \
-    --env "PROJECT_NAME=$PROJECT_NAME" \
-    --env "GRADLE_USER_HOME=/home/pi/.gradle" \
-    --env "VERBOSE=$VERBOSE" \
-    ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
-    ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} \
+    "${RUN_ARGS[@]}" \
     "$IMAGE_TAG" \
     -c '
       if [ "${DISPLAY_MODE}" = "xvfb" ]; then
@@ -718,25 +742,13 @@ if [ "$DETACH_MODE" = true ]; then
   # Detached (headless) mode: launch container and return immediately.
   # -d flag for detached, no --rm/--interactive/--tty so the container
   # persists and the plugin can track it via `container list`.
+  # --prompt-file is required (validated up front), so PROMPT_ARGS is set.
   container run \
     --name "$CONTAINER_NAME" \
     -d \
-    --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
-    --memory "$MEMORY" \
-    --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
-    ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
-    ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
-    ${DISPLAY_VOLUME_ARGS[@]+"${DISPLAY_VOLUME_ARGS[@]}"} \
-    --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
-    --volume "$RESOLVED_PROMPT_FILE:/tmp/pi-prompt.txt:ro" \
-    --workdir "/projects/$PROJECT_NAME" \
-    --env "PROJECT_NAME=$PROJECT_NAME" \
-    --env "PROMPT_FILE=/tmp/pi-prompt.txt" \
+    "${RUN_ARGS[@]}" \
+    "${PROMPT_ARGS[@]}" \
     --env "DETACH_MODE=true" \
-    --env "GRADLE_USER_HOME=/home/pi/.gradle" \
-    --env "VERBOSE=$VERBOSE" \
-    ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
-    ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} \
     "$IMAGE_TAG" \
     "$@" 1>&2
 
@@ -748,24 +760,11 @@ if [ "$DETACH_MODE" = true ]; then
 else
   container run \
     --name "$CONTAINER_NAME" \
-    --network "$([ "$WITH_INTERNET" = true ] && echo default || echo sandboxed)" \
     --rm \
     --interactive \
     --tty \
-    --memory "$MEMORY" \
-    --volume "$RENDERED_CONFIG_DIR:/home/pi/.pi/agent" \
-    ${GRADLE_VOLUME_ARGS[@]+"${GRADLE_VOLUME_ARGS[@]}"} \
-    ${EXTRA_VOLUME_ARGS[@]+"${EXTRA_VOLUME_ARGS[@]}"} \
-    ${DISPLAY_VOLUME_ARGS[@]+"${DISPLAY_VOLUME_ARGS[@]}"} \
-    --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
-    ${PROMPT_FILE:+--volume "$RESOLVED_PROMPT_FILE:/tmp/pi-prompt.txt:ro"} \
-    --workdir "/projects/$PROJECT_NAME" \
-    --env "PROJECT_NAME=$PROJECT_NAME" \
-    ${PROMPT_FILE:+--env "PROMPT_FILE=/tmp/pi-prompt.txt"} \
-    --env "GRADLE_USER_HOME=/home/pi/.gradle" \
-    --env "VERBOSE=$VERBOSE" \
-    ${DISPLAY_ENV_ARGS[@]+"${DISPLAY_ENV_ARGS[@]}"} \
-    ${OPENROUTER_ENV_FILE_ARGS[@]+"${OPENROUTER_ENV_FILE_ARGS[@]}"} \
+    "${RUN_ARGS[@]}" \
+    ${PROMPT_ARGS[@]+"${PROMPT_ARGS[@]}"} \
     "$IMAGE_TAG" \
     "$@"
 fi
