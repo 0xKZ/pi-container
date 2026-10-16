@@ -24,6 +24,23 @@
 # network setup by hand every time.
 set -euo pipefail
 
+# Require bash >= 4. run.sh uses bash 4+ features (the --add-folder
+# collision check uses associative arrays). macOS ships bash 3.2 as
+# /bin/bash, so 'env bash' can resolve to it; fail early with a clear
+# message instead of a cryptic "declare: -A: invalid option" mid-script.
+# (The interactive shell you use -- zsh, fish, ... -- doesn't matter; only
+# what 'bash' resolves to in your PATH does.)
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+  {
+    echo "run.sh requires bash >= 4, but this shell is ${BASH_VERSION:-unknown}."
+    echo "macOS ships bash 3.2 as /bin/bash. Install a newer bash and make"
+    echo "sure it is first in your PATH (e.g. 'brew install bash'), or invoke"
+    echo "the script with an explicit path to a newer bash, e.g.:"
+    echo "  /opt/homebrew/bin/bash scripts/run.sh ..."
+  } >&2
+  exit 1
+fi
+
 IMAGE_TAG="${IMAGE_TAG:-pi-coding-agent:local}"
 MEMORY="${MEMORY:-4g}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -254,8 +271,11 @@ if [ "$OPENROUTER_MODE" = true ]; then
 fi
 
 # Resolve --add-folder paths to absolute paths and validate they exist.
-# Each folder is mounted at /extra/<basename> inside the container.
+# Each folder is mounted at /extra/<basename> inside the container. Two
+# folders with the same basename would mount to the same path (the second
+# silently hiding the first), so that's an error rather than a guess.
 EXTRA_FOLDER_MOUNTS=()  # pairs of "host_path:/extra/folder_name"
+declare -A SEEN_EXTRA_FOLDER_MOUNTS=()  # mount name -> host path, for collision checks
 for folder in "${ADD_FOLDERS[@]+"${ADD_FOLDERS[@]}"}"; do
   # Resolve to absolute path (creates no files, just canonicalises)
   local_abs=""
@@ -268,7 +288,13 @@ for folder in "${ADD_FOLDERS[@]+"${ADD_FOLDERS[@]}"}"; do
     echo "--add-folder path '$folder' resolved to '$local_abs' which is not a directory." >&2
     exit 1
   fi
-  EXTRA_FOLDER_MOUNTS+=("$local_abs:/extra/$(basename "$local_abs")")
+  folder_name="$(basename "$local_abs")"
+  if [ -n "${SEEN_EXTRA_FOLDER_MOUNTS[$folder_name]:-}" ]; then
+    echo "--add-folder: '$local_abs' and '${SEEN_EXTRA_FOLDER_MOUNTS[$folder_name]}' both mount to /extra/$folder_name (same folder name). Use different folder names." >&2
+    exit 1
+  fi
+  SEEN_EXTRA_FOLDER_MOUNTS["$folder_name"]="$local_abs"
+  EXTRA_FOLDER_MOUNTS+=("$local_abs:/extra/$folder_name")
 done
 
 if [ ! -d "$PROJECT_DIR" ]; then
