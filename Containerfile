@@ -62,9 +62,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-# Claude Code, in case we want to launch that instead of PI. Installed globally via npm.
-RUN npm install -g @anthropic-ai/claude-code \
- && claude --version
 
 # Debian/Ubuntu ship the `fd` tool under the binary name `fdfind` (to avoid
 # clashing with an unrelated, pre-existing `fd` command). We symlink it to
