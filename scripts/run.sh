@@ -312,29 +312,52 @@ ensure_sandboxed_network() {
   fi
 }
 
+# Reads back the forward target ("ip:port") the running egress-proxy
+# forwards to, from its recorded init process arguments. Prints nothing if
+# the proxy isn't running or the target can't be determined.
+get_egress_proxy_target() {
+  container inspect egress-proxy 2>/dev/null \
+    | jq -r '.[0].configuration.initProcess.arguments // [] | map(tostring) | join(" ")' 2>/dev/null \
+    | grep -oE 'TCP:[0-9.]+:[0-9]+' | head -n1 | sed 's/^TCP://'
+}
+
 # Starts the dual-homed socat forwarder if one isn't already running.
 # Reused across script invocations on purpose -- see the network sandbox
 # overview comment above for why we don't tear this down on exit.
+# Reuse is conditional on the running proxy forwarding to the CURRENT
+# target: the proxy outlives this script, and the target includes the
+# vmnet gateway IP, which changed when container 1.5 moved the default
+# subnet. A stale proxy would silently route every session to a dead
+# address, so on any mismatch (or if the target can't be determined) we
+# recreate the proxy instead. Recreating a healthy proxy is harmless.
 ensure_egress_proxy() {
   local target_ip="$1" target_port="$2"
 
   if container list --format json | jq -e '.[] | select(.configuration.id == "egress-proxy" and .status.state == "running")' >/dev/null 2>&1; then
-    return 0
+    if [ "$(get_egress_proxy_target)" = "${target_ip}:${target_port}" ]; then
+      return 0
+    fi
   fi
 
   # Remove a stopped/stale container under this name before recreating it
-  # (e.g. left over from a crash). `|| true` because this errors harmlessly
+  # (e.g. left over from a crash, or an old proxy pointing at a stale
+  # inference-server address). `|| true` because this errors harmlessly
   # if no such container exists at all.
   container rm -f egress-proxy >/dev/null 2>&1 || true
 
   # Pinned to a digest for reproducibility.
   #   To find the digest of a new image:
   #     container image inspect <image>:<tag> | jq -r '.[].configuration.descriptor.digest'
+  #
+  # The proxy listens on the SAME port as the inference server (and
+  # forwards to it), so the address rendered into models.json
+  # (INFERENCE_SERVER_HOST_PORT) is valid whether or not the agent
+  # connects through the proxy.
   container run -d --name egress-proxy \
     --network sandboxed \
     --network default \
     alpine/socat@sha256:7f9a06753033f2b7de18edc2353f2c15153413d95a039163c6db270fc7a6c3b0 \
-    TCP-LISTEN:8080,fork,reuseaddr "TCP:${target_ip}:${target_port}"
+    "TCP-LISTEN:${target_port},fork,reuseaddr" "TCP:${target_ip}:${target_port}"
 }
 
 # Reads back the proxy's address on the "sandboxed" side specifically (it
@@ -473,10 +496,11 @@ warm_gradle_if_needed() {
 # Wait for the egress-proxy socat listener to be ready.
 # Apple's container runtime does not support --health-cmd, so we test
 # connectivity directly by running socat inside the proxy container.
+# The proxy listens on the inference server's port (see ensure_egress_proxy).
 wait_for_egress_proxy() {
-  local retries=15
+  local port="$1" retries=15
   for ((i = 1; i <= retries; i++)); do
-    if container exec egress-proxy socat -t1 TCP:localhost:8080 /dev/null >/dev/null 2>&1; then
+    if container exec egress-proxy socat -t1 "TCP:localhost:${port}" /dev/null >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -507,7 +531,7 @@ if [ "$WITH_INTERNET" = true ]; then
   EGRESS_PROXY_IP="$INFERENCE_SERVER_HOST_IP"
 else
   ensure_egress_proxy "$INFERENCE_SERVER_HOST_IP" "$INFERENCE_SERVER_HOST_PORT"
-  wait_for_egress_proxy
+  wait_for_egress_proxy "$INFERENCE_SERVER_HOST_PORT"
   EGRESS_PROXY_IP="$(get_proxy_ip egress-proxy sandboxed)"
 
   if [ -z "$EGRESS_PROXY_IP" ]; then
@@ -635,6 +659,7 @@ if [ "$SHELL_MODE" = true ]; then
     --volume "$PROJECT_DIR:/projects/$PROJECT_NAME" \
     --workdir "/projects/$PROJECT_NAME" \
     --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP" \
+    --env "INFERENCE_SERVER_HOST_PORT=$INFERENCE_SERVER_HOST_PORT" \
     --env "PROJECT_NAME=$PROJECT_NAME" \
     --env "GRADLE_USER_HOME=/home/pi/.gradle" \
     --env "VERBOSE=$VERBOSE" \

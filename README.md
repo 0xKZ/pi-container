@@ -83,9 +83,9 @@ Press `Ctrl+D` to exit pi. Press it again to exit the post-exit container shell 
 Before trusting the agent with real work, confirm the sandbox blocks the open internet while still allowing access to the local inference server. Drop into a shell with `./scripts/run.sh --shell` and run:
 
 ```bash
-curl --max-time 5 https://www.google.com/        # should fail
-curl --max-time 5 http://192.168.64.1:8080       # should fail
-curl http://$EGRESS_PROXY_IP:8080                # should succeed
+curl --max-time 5 https://www.google.com/                      # should fail
+curl --max-time 5 http://192.168.64.1:8080                     # should fail
+curl http://$EGRESS_PROXY_IP:${INFERENCE_SERVER_HOST_PORT:-8080}  # should succeed
 ```
 
 If the first two succeed, the sandbox isn't isolating the container — investigate before running the agent on anything sensitive.
@@ -111,7 +111,7 @@ When pi finishes its session, the container entrypoint drops you into a bash she
 | `PROJECT_DIR` | `$(pwd)` | Project directory to bind-mount into the container |
 | `IMAGE_TAG` | `pi-coding-agent:local` | Container image tag to use |
 | `MEMORY` | `4g` | Memory limit for the agent container |
-| `INFERENCE_SERVER_HOST_IP` | `192.168.64.1` | Host-side IP of the inference server |
+| `INFERENCE_SERVER_HOST_IP` | *(auto-detected)* | Host-side IP of the inference server. Auto-detected from the default network's gateway (the vmnet subnet changed between container releases); falls back to `192.168.64.1` if detection fails. |
 | `INFERENCE_SERVER_HOST_PORT` | `8080` | Port of the inference server |
 | `GRADLE_WARMUP_SCRIPT` | `scripts/gradle-warmup.sh` | Custom warmup script path |
 | `EGRESS_PROXY_IP` | *(auto-detected)* | The proxy's IP on the active network (sandboxed or default, depending on `--with-internet`); exposed as an env var inside the container |
