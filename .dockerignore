@@ -1,0 +1,18 @@
+# Excludes files from the `container build` context (what is sent to the
+# builder). This does NOT affect the image itself (only COPY instructions
+# decide image contents) and does NOT affect bind mounts at runtime, so the
+# agent's git work on the mounted project directory is unaffected.
+#
+# Supported by Apple's container CLI (.dockerignore in the build context;
+# see https://github.com/apple/container).
+
+# Repo metadata -- safe to exclude for the same reason: the image gets git
+# from apt, and the agent runs git against the bind-mounted project dir
+# (whose .git lives on the host), never against the image.
+.git/
+
+# pi session transcripts from running the agent on this very repo
+.pi/
+
+# macOS cruft
+.DS_Store
