@@ -24,7 +24,7 @@ with a network sandbox. The agent can reach only a local inference server — no
 2. `run.sh` sets up three container networks:
    - **sandboxed** — internal, no internet. Agent runs here.
    - **default** — full internet. Used for Gradle warmup.
-   - **egress-proxy** — a `socat` container dual-homed on both, forwarding only to the inference server
+   - **egress-proxy** — a small Node L7 HTTP proxy (runs on the agent image itself) dual-homed on both, forwarding only to the inference server and rewriting the `Host` header to it
 3. The project directory is bind-mounted at `/projects/<name>`
 4. `pi-config/` is rendered (proxy IP substituted) and mounted at `/home/pi/.pi/agent`
 5. Pi runs inside the container; on exit, a bash shell remains for debugging

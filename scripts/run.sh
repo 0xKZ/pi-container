@@ -98,11 +98,17 @@ GRADLE_WARMUP_SCRIPT="${GRADLE_WARMUP_SCRIPT:-$REPO_ROOT/scripts/gradle-warmup.s
 #     The Gradle warmup run also uses this network since it needs real
 #     internet access to download dependencies.
 #
-#   - "egress-proxy" -- a small `socat` container dual-homed onto BOTH
-#     "sandboxed" and "default". It listens on its sandboxed-side IP and
-#     forwards everything to 192.168.64.1:8080 on the default side. This
-#     is the only bridge between the two networks, so the agent can reach
-#     the inference server but nothing else.
+#   - "egress-proxy" -- a small L7 HTTP proxy container dual-homed onto
+#     BOTH "sandboxed" and "default". It listens on its sandboxed-side IP
+#     and forwards everything to the inference server on the default side.
+#     This is the only bridge between the two networks, so the agent can
+#     reach the inference server but nothing else.
+#
+#     It is an L7 (HTTP) proxy, not a blind TCP forwarder, because it
+#     rewrites the request's Host header to the inference server's address.
+#     A plain L4 forward would leak the proxy's sandboxed IP (e.g.
+#     192.168.200.2) into the Host header, which servers that validate
+#     Host headers (such as splash) refuse with a 403.
 #
 # The proxy's sandboxed IP is assigned dynamically, so models.json is a
 # template with placeholders that we render at launch time
@@ -339,15 +345,16 @@ ensure_sandboxed_network() {
 }
 
 # Reads back the forward target ("ip:port") the running egress-proxy
-# forwards to, from its recorded init process arguments. Prints nothing if
-# the proxy isn't running or the target can't be determined.
+# forwards to, from its recorded init process arguments (the TARGET=ip:port
+# argument passed to the proxy process). Prints nothing if the proxy isn't
+# running or the target can't be determined.
 get_egress_proxy_target() {
   container inspect egress-proxy 2>/dev/null \
     | jq -r '.[0].configuration.initProcess.arguments // [] | map(tostring) | join(" ")' 2>/dev/null \
-    | grep -oE 'TCP:[0-9.]+:[0-9]+' | head -n1 | sed 's/^TCP://'
+    | grep -oE 'TARGET=[0-9.]+:[0-9]+' | head -n1 | cut -d= -f2
 }
 
-# Starts the dual-homed socat forwarder if one isn't already running.
+# Starts the dual-homed L7 forwarder if one isn't already running.
 # Reused across script invocations on purpose -- see the network sandbox
 # overview comment above for why we don't tear this down on exit.
 # Reuse is conditional on the running proxy forwarding to the CURRENT
@@ -371,19 +378,53 @@ ensure_egress_proxy() {
   # if no such container exists at all.
   container rm -f egress-proxy >/dev/null 2>&1 || true
 
-  # Pinned to a digest for reproducibility.
-  #   To find the digest of a new image:
-  #     container image inspect <image>:<tag> | jq -r '.[].configuration.descriptor.digest'
+  # Runs on the SAME locally-built agent image (it ships Node.js), so there
+  # is no external image to pull or pin. --entrypoint node overrides the
+  # image's entrypoint (which would otherwise run `pi`).
   #
   # The proxy listens on the SAME port as the inference server (and
   # forwards to it), so the address rendered into models.json
   # (INFERENCE_SERVER_HOST_PORT) is valid whether or not the agent
   # connects through the proxy.
+  #
+  # L7 forwarder: rewrites the Host header to the forward target, so
+  # servers that validate the Host header (e.g. splash, which 403s
+  # anything not bound to loopback/localhost/--allowed-host or the IP the
+  # connection arrived on) accept requests that arrive via the proxy.
+  # Streams responses (SSE included) and pipes request bodies through.
+  # (No single quotes in the script -- it is passed single-quoted to bash.)
+  local proxy_script
+  proxy_script=$(cat <<'JS'
+const http = require("http");
+const target = process.argv[1].split("=").pop();
+const sep = target.indexOf(":");
+const host = target.slice(0, sep);
+const port = Number(target.slice(sep + 1));
+http.createServer((req, res) => {
+  const url = new URL(req.url, "http://localhost");
+  const headers = Object.assign({}, req.headers);
+  delete headers["connection"];
+  delete headers["keep-alive"];
+  headers["host"] = target;
+  const upstream = http.request({ host: host, port: port, method: req.method, path: url.pathname + url.search, headers: headers }, (r) => {
+    res.writeHead(r.statusCode, r.headers);
+    r.pipe(res);
+  });
+  upstream.on("error", () => { req.destroy(); res.destroy(); });
+  req.on("error", () => upstream.destroy());
+  req.pipe(upstream);
+}).listen(Number(process.argv[2].split("=").pop()), "0.0.0.0");
+JS
+)
   container run -d --name egress-proxy \
     --network sandboxed \
     --network default \
-    alpine/socat@sha256:7f9a06753033f2b7de18edc2353f2c15153413d95a039163c6db270fc7a6c3b0 \
-    "TCP-LISTEN:${target_port},fork,reuseaddr" "TCP:${target_ip}:${target_port}"
+    --memory 512m \
+    --entrypoint node \
+    "$IMAGE_TAG" \
+    -e "$proxy_script" \
+    "TARGET=${target_ip}:${target_port}" \
+    "PORT=${target_port}"
 }
 
 # Reads back the proxy's address on the "sandboxed" side specifically (it
@@ -519,14 +560,21 @@ warm_gradle_if_needed() {
   fi
 }
 
-# Wait for the egress-proxy socat listener to be ready.
+# Wait for the egress-proxy listener to be ready.
 # Apple's container runtime does not support --health-cmd, so we test
-# connectivity directly by running socat inside the proxy container.
+# connectivity directly by opening a TCP connection from inside the proxy
+# container (node is available -- the proxy runs on the agent image).
 # The proxy listens on the inference server's port (see ensure_egress_proxy).
 wait_for_egress_proxy() {
   local port="$1" retries=15
   for ((i = 1; i <= retries; i++)); do
-    if container exec egress-proxy socat -t1 "TCP:localhost:${port}" /dev/null >/dev/null 2>&1; then
+    if container exec egress-proxy node -e '
+      const c = require("net").connect(Number(process.argv[1]), "localhost");
+      c.setTimeout(1000);
+      c.on("connect", () => { c.end(); process.exit(0); });
+      c.on("timeout", () => { c.destroy(); process.exit(1); });
+      c.on("error", () => process.exit(1));
+    ' "$port" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -552,7 +600,7 @@ ensure_sandboxed_network
 
 # When --with-internet is set, the agent runs on the default network with
 # full internet access. No proxy is needed — connect directly to the
-# inference server. This also saves the memory cost of the socat container.
+# inference server. This also saves the memory cost of the proxy container.
 if [ "$WITH_INTERNET" = true ]; then
   EGRESS_PROXY_IP="$INFERENCE_SERVER_HOST_IP"
 else

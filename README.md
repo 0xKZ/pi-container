@@ -143,7 +143,7 @@ To prevent path pollution between the container and your Mac, Gradle metadata is
 
 ## Egress proxy lifecycle
 
-The `egress-proxy` container (a `socat` forwarder) is started once and persists across `run.sh` invocations. Parallel agent sessions share the same proxy. It is not torn down when a session ends — remove it manually with `container rm -f egress-proxy` if needed.
+The `egress-proxy` container (a small Node L7 HTTP forwarder that runs on the agent image and rewrites the `Host` header to the inference server) is started once and persists across `run.sh` invocations. Parallel agent sessions share the same proxy. It is not torn down when a session ends — remove it manually with `container rm -f egress-proxy` if needed.
 
 ## APPEND_SYSTEM.md
 
