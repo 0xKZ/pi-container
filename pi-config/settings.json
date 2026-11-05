@@ -1,5 +1,6 @@
 {
   "theme": "gruvbox-dark-hard",
+  "tuiMode": "regular",
   "sessionDir": ".pi/sessions",
   "httpIdleTimeoutMs": __HTTP_IDLE_TIMEOUT_MS__,
   "retry": {
