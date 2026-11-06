@@ -3,6 +3,9 @@
   "tuiMode": "regular",
   "sessionDir": ".pi/sessions",
   "packages": ["/opt/pi-packages/pi-notify"],
+  "notify": {
+    "onError": false
+  },
   "httpIdleTimeoutMs": __HTTP_IDLE_TIMEOUT_MS__,
   "retry": {
     "provider": {
