@@ -280,7 +280,17 @@ fi
 # Each folder is mounted at /extra/<basename> inside the container. Two
 # folders with the same basename would mount to the same path (the second
 # silently hiding the first), so that's an error rather than a guess.
-EXTRA_FOLDER_MOUNTS=()  # pairs of "host_path:/extra/folder_name"
+#
+# EXTRA_FOLDER_MOUNTS holds the resolved absolute host paths (what we pass
+# to `container run --volume`). EXTRA_FOLDER_SYSTEM_TEXTS holds the EXACT
+# text the user typed on the command line, paired with the container path
+# -- that's what gets written into the system prompt. Resolving relative
+# paths to absolute ones before showing them to the agent would leak host
+# paths (e.g. the user's home directory, sibling project names) the user
+# never explicitly chose to share; keeping the user's own text means the
+# agent sees exactly what the user typed and nothing more.
+EXTRA_FOLDER_MOUNTS=()      # pairs of "host_path:/extra/folder_name"
+EXTRA_FOLDER_SYSTEM_TEXTS=()  # pairs of "<user-typed text>:/extra/folder_name"
 declare -A SEEN_EXTRA_FOLDER_MOUNTS=()  # mount name -> host path, for collision checks
 for folder in "${ADD_FOLDERS[@]+"${ADD_FOLDERS[@]}"}"; do
   # Resolve to absolute path (creates no files, just canonicalises)
@@ -301,6 +311,7 @@ for folder in "${ADD_FOLDERS[@]+"${ADD_FOLDERS[@]}"}"; do
   fi
   SEEN_EXTRA_FOLDER_MOUNTS["$folder_name"]="$local_abs"
   EXTRA_FOLDER_MOUNTS+=("$local_abs:/extra/$folder_name")
+  EXTRA_FOLDER_SYSTEM_TEXTS+=("$folder:/extra/$folder_name")
 done
 
 if [ ! -d "$PROJECT_DIR" ]; then
@@ -444,8 +455,11 @@ get_proxy_ip() {
 #   (b) the checked-in templates never get overwritten with stale values.
 # If with_internet is "false", appends a no-internet notice to APPEND_SYSTEM.md.
 # If openrouter_mode is "true", skips rendering models.json.
-# If extra mounts are provided (args 6+), appends a path mapping table so the
-# agent can resolve host paths the user references to their /extra/... locations.
+# If extra folder texts are provided (args 6+), each "<user-typed text>:/extra/...",
+# appends a path mapping table so the agent can resolve the folder names the user
+# references to their /extra/... locations. The left column is the user's exact
+# --add-folder text (never a resolved/absolute path) -- see the comment where
+# EXTRA_FOLDER_SYSTEM_TEXTS is built for why.
 render_config() {
   local proxy_ip="$1" proxy_port="$2" out_dir="$3" with_internet="$4" openrouter_mode="$5"
   shift 5
@@ -471,19 +485,21 @@ render_config() {
       >> "$out_dir/APPEND_SYSTEM.md"
   fi
   # Append path mapping for --add-folder mounts so the agent knows where
-  # to find files when the user references a host path that doesn't exist
-  # inside the container.
+  # to find files when the user references a folder that doesn't exist
+  # inside the container. The "Your path" column shows exactly what the
+  # user typed on the command line -- never a resolved absolute path --
+  # so no host paths the user didn't explicitly provide reach the agent.
   if [ $# -gt 0 ]; then
     {
       printf '\n## Extra Folder Mounts\n\n'
       printf 'The following folders from your machine are mounted inside this container\n'
-      printf 'under `/extra/`. If a path you reference does not exist, check this mapping:\n\n'
+      printf 'under `/extra/`. If a folder you reference does not exist, check this mapping:\n\n'
       printf '| Your path | Container path |\n'
       printf '|---|---|\n'
       for mount in "$@"; do
-        local host_path="${mount%%:*}"
+        local user_text="${mount%%:*}"
         local container_path="${mount#*:}"
-        printf '| `%s` | `%s` |\n' "$host_path" "$container_path"
+        printf '| `%s` | `%s` |\n' "$user_text" "$container_path"
       done
     } >> "$out_dir/APPEND_SYSTEM.md"
   fi
@@ -635,7 +651,7 @@ else
   MODEL_PROXY_IP="$EGRESS_PROXY_IP"
 fi
 render_config "$MODEL_PROXY_IP" "$INFERENCE_SERVER_HOST_PORT" "$RENDERED_CONFIG_DIR" "$WITH_INTERNET" "$OPENROUTER_MODE" \
-  "${EXTRA_FOLDER_MOUNTS[@]+"${EXTRA_FOLDER_MOUNTS[@]}"}"
+  "${EXTRA_FOLDER_SYSTEM_TEXTS[@]+"${EXTRA_FOLDER_SYSTEM_TEXTS[@]}"}"
 
 # If the project has a Gradle wrapper, set up the container-dedicated Gradle
 # directories. This runs regardless of --with-internet so that the project's
