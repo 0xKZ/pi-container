@@ -17,7 +17,10 @@
 # in one Containerfile, and each one starts a fresh, independent stage.
 # Only the LAST stage (the one without a name, or whichever you target)
 # actually becomes the image you end up running.
-FROM node:22-bookworm-slim AS node-source
+# 24 is the active LTS line. Minor is intentionally unpinned (floating tag)
+# so each `container build` picks up the latest security patch release.
+# pi requires node >=22.19.0, so 24 is safe.
+FROM node:24-bookworm-slim AS node-source
 
 # This is the base for our final image: Eclipse Temurin's official JDK
 # image. It runs on Ubuntu 24.04 ("noble"), which uses Debian-style apt

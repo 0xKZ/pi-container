@@ -9,7 +9,7 @@ with a network sandbox. The agent can reach only a local inference server — no
 
 | File | Purpose |
 |---|---|
-| `Containerfile` | Image definition (JDK 21 + Node 22 + pi + dev tools). Built with `container build` |
+| `Containerfile` | Image definition (JDK 21 + Node 24 + pi + dev tools). Built with `container build` |
 | `scripts/run.sh` | Main entry point. Handles networking, mounts, Gradle warmup, and launches pi |
 | `scripts/build.sh` | Builds the container image (run once on the host Mac) |
 | `scripts/entrypoint.sh` | Container entrypoint — runs `pi`, then drops to a shell on exit |
