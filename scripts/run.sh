@@ -80,14 +80,15 @@ CONTAINER_PROJECT_GRADLE_DIR="${CONTAINER_GRADLE_CACHE_PROJECT}/project-gradle"
 # Path to the Gradle warmup script. Defaults to the bundled script at
 # scripts/gradle-warmup.sh (copied into the image at /usr/local/bin/gradle-warmup.sh).
 # Set this to any script (absolute or relative to cwd) to customize the warmup.
-# The script is bind-mounted into the container and run from /workspace.
+# The script is bind-mounted into the container and run from /projects/<project-name>.
 GRADLE_WARMUP_SCRIPT="${GRADLE_WARMUP_SCRIPT:-$REPO_ROOT/scripts/gradle-warmup.sh}"
 
 # --------------------------------------------------------------------------
 # Network sandbox
 #
 # The agent container must NOT reach the open internet, but DOES need to
-# reach our local inference server on the Mac host at 192.168.64.1:8080.
+# reach our local inference server on the Mac host -- the default
+# network's gateway, auto-detected at launch (see detect_host_gateway below).
 # We achieve this using three `container` networks and a small proxy:
 #
 #   - "sandboxed" -- an internal network (no gateway to the internet or
@@ -231,14 +232,21 @@ if [ "$OPENROUTER_MODE" = true ] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
   exit 1
 fi
 
+# Resolve a path to an absolute path, canonicalising relative paths against
+# the current directory. Creates no files; the path need not exist (the
+# caller validates it).
+resolve_abs_path() {
+  if [[ "$1" == /* ]]; then
+    printf '%s' "$1"
+  else
+    printf '%s' "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+  fi
+}
+
 # Resolve --prompt-file to an absolute path and validate it exists.
 RESOLVED_PROMPT_FILE=""
 if [ -n "$PROMPT_FILE" ]; then
-  if [[ "$PROMPT_FILE" == /* ]]; then
-    RESOLVED_PROMPT_FILE="$PROMPT_FILE"
-  else
-    RESOLVED_PROMPT_FILE="$(cd "$(dirname "$PROMPT_FILE")" && pwd)/$(basename "$PROMPT_FILE")"
-  fi
+  RESOLVED_PROMPT_FILE="$(resolve_abs_path "$PROMPT_FILE")"
   if [ ! -f "$RESOLVED_PROMPT_FILE" ]; then
     echo "--prompt-file path '$PROMPT_FILE' resolved to '$RESOLVED_PROMPT_FILE' which is not a file." >&2
     exit 1
@@ -293,13 +301,7 @@ EXTRA_FOLDER_MOUNTS=()      # pairs of "host_path:/extra/folder_name"
 EXTRA_FOLDER_SYSTEM_TEXTS=()  # pairs of "<user-typed text>:/extra/folder_name"
 declare -A SEEN_EXTRA_FOLDER_MOUNTS=()  # mount name -> host path, for collision checks
 for folder in "${ADD_FOLDERS[@]+"${ADD_FOLDERS[@]}"}"; do
-  # Resolve to absolute path (creates no files, just canonicalises)
-  local_abs=""
-  if [[ "$folder" == /* ]]; then
-    local_abs="$folder"
-  else
-    local_abs="$(cd "$(dirname "$folder")" && pwd)/$(basename "$folder")"
-  fi
+  local_abs="$(resolve_abs_path "$folder")"
   if [ ! -d "$local_abs" ]; then
     echo "--add-folder path '$folder' resolved to '$local_abs' which is not a directory." >&2
     exit 1
@@ -519,10 +521,8 @@ warm_gradle_if_needed() {
   echo "Gradle project detected. Warming cache at $CONTAINER_GRADLE_CACHE_PROJECT..." >&2
 
   # Resolve the warmup script to an absolute path.
-  local warmup_script="$GRADLE_WARMUP_SCRIPT"
-  if [[ "$warmup_script" != /* ]]; then
-    warmup_script="$(cd "$(dirname "$warmup_script")" && pwd)/$(basename "$warmup_script")"
-  fi
+  local warmup_script
+  warmup_script="$(resolve_abs_path "$GRADLE_WARMUP_SCRIPT")"
 
   if [ ! -f "$warmup_script" ]; then
     echo "WARNING: Gradle warmup script not found at $warmup_script" >&2
@@ -746,6 +746,7 @@ RUN_ARGS=(
   --volume "$PROJECT_DIR:/projects/$PROJECT_NAME"
   --workdir "/projects/$PROJECT_NAME"
   --env "EGRESS_PROXY_IP=$EGRESS_PROXY_IP"
+  --env "INFERENCE_SERVER_HOST_IP=$INFERENCE_SERVER_HOST_IP"
   --env "INFERENCE_SERVER_HOST_PORT=$INFERENCE_SERVER_HOST_PORT"
   --env "PROJECT_NAME=$PROJECT_NAME"
   --env "GRADLE_USER_HOME=/home/pi/.gradle"
@@ -776,23 +777,15 @@ if [ "$SHELL_MODE" = true ]; then
   else
     echo "Shell mode: ${local_network_label} network, proxy reachable at ${EGRESS_PROXY_IP}:${INFERENCE_SERVER_HOST_PORT}" >&2
   fi
+  # Shell mode reuses the image's entrypoint instead of an inline script:
+  # PI_SKIP_PI makes it do the display setup and project cd, then drop into
+  # the debug shell without ever running pi. This keeps the shell
+  # environment identical to a real agent run and keeps the Xvfb startup
+  # logic in exactly one place (entrypoint.sh).
   container run --rm -it \
-    --entrypoint sh \
     "${RUN_ARGS[@]}" \
-    "$IMAGE_TAG" \
-    -c '
-      if [ "${DISPLAY_MODE}" = "xvfb" ]; then
-        XVFB_LOG="/dev/null"
-        [ "${VERBOSE}" = "true" ] && XVFB_LOG=""
-        Xvfb "${DISPLAY:-:99}" -screen 0 1920x1080x24 2>"$XVFB_LOG" &
-        for i in 1 2 3 4 5; do
-          if xdpyinfo >/dev/null 2>&1; then break; fi
-          sleep 0.2
-        done
-      fi
-      export PS1="(AGENT-SANDBOX-${PROJECT_NAME}) \w \$ "
-      exec bash --norc
-    '
+    --env "PI_SKIP_PI=true" \
+    "$IMAGE_TAG"
 
   exit 0
 fi

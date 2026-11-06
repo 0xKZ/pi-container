@@ -2,9 +2,9 @@
 #
 # Base: official Eclipse Temurin JDK image (built by the Eclipse Foundation,
 # the same people who produce the JDK), with Node.js binaries copied in from
-# the official Node image. pi is installed globally via npm, /workspace is
-# the mount point for the project, and additional build tools are installed
-# as needed.
+# the official Node image. pi is installed globally via npm, each project is
+# bind-mounted at /projects/<name> at runtime, and additional build tools are
+# installed as needed.
 #
 # Both Java and Node come from their own official, purpose-built images.
 # This avoids the need to configure any third-party package repositories.

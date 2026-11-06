@@ -8,6 +8,12 @@
 # hit an error and quit) should still land you in bash, not kill the
 # container.
 #
+# Shell mode (run.sh --shell): PI_SKIP_PI=true skips pi entirely and drops
+# straight into the debug shell, after the same display setup and project
+# cd a real agent run gets. This is the ONLY copy of the Xvfb startup
+# logic -- run.sh's --shell mode reuses this entrypoint instead of
+# duplicating it.
+#
 # Detached mode: if DETACH_MODE is set, the container was launched in
 # headless mode. Pi runs and the container exits when it finishes
 # (no debug shell).
@@ -33,10 +39,20 @@ if [ "${DISPLAY_MODE}" = "xvfb" ]; then
 fi
 
 # Navigate to the project-specific directory so pi's footer and terminal
-# title show the project name instead of a generic "/workspace".
+# title show the project name instead of the generic /projects workdir.
 # PROJECT_NAME is passed in from run.sh via --env.
 if [ -n "${PROJECT_NAME}" ] && [ -d "/projects/${PROJECT_NAME}" ]; then
     cd "/projects/${PROJECT_NAME}"
+fi
+
+# Custom prompt so this shell is easy to spot among many open terminal
+# windows/sessions. PROJECT_NAME is passed in from run.sh via --env, since
+# this container only sees /projects/<name>, not the host path.
+export PS1="(AGENT-SANDBOX-${PROJECT_NAME:-unknown}) \w \$ "
+
+# Shell mode (run.sh --shell): skip pi, straight to the debug shell.
+if [ "${PI_SKIP_PI:-}" = true ]; then
+    exec bash --norc
 fi
 
 # Run pi, optionally with a prompt file.
@@ -55,11 +71,5 @@ fi
 echo ""
 echo "pi exited (code ${PI_EXIT_CODE}). Dropping into a shell -- exit this to stop the container."
 echo ""
-
-
-# Custom prompt so this shell is easy to spot among many open terminal
-# windows/sessions. PROJECT_NAME is passed in from run.sh via --env, since
-# this container only sees /projects/<name>, not the host path.
-export PS1="(AGENT-SANDBOX-${PROJECT_NAME:-unknown}) \w \$ "
 
 exec bash --norc
