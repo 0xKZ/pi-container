@@ -28,6 +28,11 @@ with a network sandbox. The agent can reach only a local inference server — no
 4. `pi-config/` is rendered (proxy IP substituted) and mounted at `/home/pi/.pi/agent`
 5. Pi runs inside the container; on exit, a bash shell remains for debugging
 
+The **pi-notify** extension is baked into the image at `/opt/pi-packages/pi-notify`
+(see the Containerfile) and enabled by the `packages` entry in
+`pi-config/settings.json`. Baking under `~/.pi/agent` would not work —
+the `pi-config/` bind mount hides everything the image places there.
+
 ## Running
 
 ```bash

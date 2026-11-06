@@ -100,6 +100,10 @@ Each project gets its own isolated session store. Add `.pi/` to your project's `
 
 The `pi-config/` directory is mounted into the container as the agent's config. Subdirectories like `extensions/` and `themes/` are passed through as-is. For details on all supported config files, see the [pi documentation](https://pi.dev/).
 
+### Pi packages (extensions from npm)
+
+Pi packages are baked into the image at `/opt/pi-packages/` at build time (see the `Containerfile`) and enabled by local-path entries in the `"packages"` array of `pi-config/settings.json`. Local-path packages are loaded in place -- no copying, no install, no network -- which matters because sandboxed agents cannot reach the npm registry. Baking under `~/.pi/agent` would not work: the `pi-config/` bind mount hides everything the image places there. To add a package, unpack it under `/opt/pi-packages/` in the `Containerfile` (pinned, with a version check), add the settings entry, and rebuild with `./scripts/build.sh`.
+
 ## Post-exit shell
 
 When pi finishes its session, the container entrypoint drops you into a bash shell instead of exiting. This lets you inspect the workspace or debug issues. The container is still running until you type `exit`.

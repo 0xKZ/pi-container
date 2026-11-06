@@ -95,6 +95,39 @@ RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@${PI_VERSION
          exit 1; \
        fi
 
+# Pi Notify extension (@bacnh85/pi-notify, https://pi.dev/packages/@bacnh85/pi-notify).
+#
+# Fires desktop notifications / terminal alerts (OSC 777/99) on task
+# completion, errors, and when the agent asks a question.
+#
+# The package is pinned to a published npm release (like PI_VERSION above) and
+# unpacked to /opt/pi-packages/pi-notify.
+#
+# Why /opt/pi-packages instead of ~/.pi/agent (where `pi install` would put it):
+# run.sh bind-mounts a freshly rendered copy of pi-config/ OVER
+# /home/pi/.pi/agent at runtime, so anything baked into the image under that
+# path would be hidden by the mount. Instead, pi is told about the extension
+# via the "packages" entry in pi-config/settings.json. Local-path packages are
+# loaded in place -- no copying, no install, no network -- which matters because
+# sandboxed agents cannot reach the npm registry.
+ARG PI_NOTIFY_VERSION=0.1.9
+
+RUN mkdir -p /opt/pi-packages \
+    && cd /tmp \
+    && npm pack @bacnh85/pi-notify@${PI_NOTIFY_VERSION} \
+    && tar -xzf "bacnh85-pi-notify-${PI_NOTIFY_VERSION}.tgz" \
+    && mv package /opt/pi-packages/pi-notify \
+    && rm "bacnh85-pi-notify-${PI_NOTIFY_VERSION}.tgz" \
+    # Production install, mirroring what `pi install` does for npm packages.
+    # Today this fetches nothing (the package has no runtime deps), but a
+    # future version with real runtime deps will get them here.
+    && cd /opt/pi-packages/pi-notify \
+    && npm install --omit=dev \
+    # Verify the unpacked version matches the pin, so a registry anomaly fails
+    # the build loudly instead of silently shipping the wrong code.
+    && [ "$(node -p "require('./package.json').version")" = "${PI_NOTIFY_VERSION}" ] \
+    && [ -f extensions/index.js ]
+
 # Create the 'pi' user and group. Don't pin UID/GID — let the system
 # assign free values so this works regardless of what the base image
 # already has at 1000:1000 (Noble pre-creates an 'ubuntu' user there).

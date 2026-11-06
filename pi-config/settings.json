@@ -2,6 +2,7 @@
   "theme": "gruvbox-dark-hard",
   "tuiMode": "regular",
   "sessionDir": ".pi/sessions",
+  "packages": ["/opt/pi-packages/pi-notify"],
   "httpIdleTimeoutMs": __HTTP_IDLE_TIMEOUT_MS__,
   "retry": {
     "provider": {
