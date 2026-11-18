@@ -91,7 +91,7 @@ RUN uv pip install --system --break-system-packages numpy \
 
 # Pinned deliberately -- avoid auto-upgrading to a version that might
 # change behavior we've already tuned our workflow around.
-ARG PI_VERSION=1.5.0
+ARG PI_VERSION=1.5.2
 
 # "--ignore-scripts" is suggested by the pi documentation itself.
 #

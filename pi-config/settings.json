@@ -6,6 +6,7 @@
   "notify": {
     "onError": false
   },
+  "cacheWarming": "streaming",
   "httpIdleTimeoutMs": __HTTP_IDLE_TIMEOUT_MS__,
   "retry": {
     "provider": {
