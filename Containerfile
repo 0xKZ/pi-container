@@ -80,14 +80,16 @@ RUN ln -s "$(which fdfind)" /usr/local/bin/fd
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
     && uv --version
 
-# numpy is the one Python dependency agents reach for constantly, so bake it
-# into the image instead of relying on a (possibly network-sandboxed) install
-# at runtime. "--system" targets the distro python3 above; "--break-system-packages"
-# is required because Ubuntu 24.04 marks its system Python as externally
-# managed (PEP 668), and this is a disposable container image, so that guard
-# doesn't apply here.
-RUN uv pip install --system --break-system-packages numpy \
-    && python3 -c "import numpy; print('numpy', numpy.__version__)"
+# numpy and Pillow (PIL) are the Python dependencies agents reach for
+# constantly (Pillow shows up whenever an agent needs to inspect or process
+# images), so bake them into the image instead of relying on a (possibly
+# network-sandboxed) install at runtime. "--system" targets the distro python3
+# above; "--break-system-packages" is required because Ubuntu 24.04 marks its
+# system Python as externally managed (PEP 668), and this is a disposable
+# container image, so that guard doesn't apply here.
+RUN uv pip install --system --break-system-packages numpy pillow \
+    && python3 -c "import numpy; print('numpy', numpy.__version__)" \
+    && python3 -c "import PIL; print('PIL', PIL.__version__)"
 
 # Pinned deliberately -- avoid auto-upgrading to a version that might
 # change behavior we've already tuned our workflow around.
